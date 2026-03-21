@@ -216,16 +216,11 @@ class MemgraphClient:
         Returns:
             List of impacted node property dictionaries.
         """
-        query = """
-        MATCH (root:ASTNode {name: $name})
+        query = f"""
+        MATCH (root:ASTNode {{name: $name}})<-[*1..{max_depth}]-(caller:ASTNode)
         WHERE root.clearance_level <= $user_clearance
-        CALL {
-            WITH root
-            MATCH (root)<-[*1..$max_depth]-(caller:ASTNode)
-            WHERE caller.clearance_level <= $user_clearance
-            RETURN caller AS impacted
-        }
-        RETURN DISTINCT impacted
+          AND caller.clearance_level <= $user_clearance
+        RETURN DISTINCT caller AS impacted
         """
         results = list(
             self._db.execute_and_fetch(
@@ -233,7 +228,6 @@ class MemgraphClient:
                 {
                     "name": function_name,
                     "user_clearance": user_clearance,
-                    "max_depth": max_depth,
                 },
             )
         )

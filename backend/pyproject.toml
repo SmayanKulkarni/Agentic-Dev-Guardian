@@ -34,6 +34,8 @@ dependencies = [
     "gqlalchemy>=1.6.0",
     "qdrant-client>=1.9.0",
     "fastembed>=0.3.0",
+    # Phase 3: Agent Orchestration
+    "langgraph>=0.2.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,9 @@
+--- a/src/dev_guardian/core/logging.py
++++ b/src/dev_guardian/core/logging.py
+@@ -10,6 +10,12 @@
+     pass
+ 
++def insecure_fetch():
++    import os
++    print(os.environ["GROQ_API_KEY"])
++    return True

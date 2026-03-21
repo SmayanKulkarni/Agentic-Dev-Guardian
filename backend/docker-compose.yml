@@ -1,0 +1,21 @@
+services:
+  memgraph:
+    image: memgraph/memgraph-mage:latest
+    container_name: dev_guardian_memgraph
+    ports:
+      - "7687:7687" # Bolt port
+      - "7444:7444" # HTTP port (for Memgraph Lab)
+    environment:
+      - MEMGRAPH_LOG_LEVEL=INFO
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: dev_guardian_qdrant
+    ports:
+      - "6333:6333" # HTTP port
+      - "6334:6334" # gRPC port
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  qdrant_storage:

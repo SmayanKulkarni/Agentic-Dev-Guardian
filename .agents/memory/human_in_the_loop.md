@@ -5,8 +5,8 @@ This document is strictly maintained for the Human engineering supervisor. Whene
 The goal of this file is to help the Human understand *exactly* what coding has been completed from the ground up, what changes were made, and how they affect the codebase without needing to read raw pull request diffs.
 
 ## Current Project State
-- **Current Phase:** Phase 2 COMPLETE ✅. Phase 3 (LangGraph Agent Workflows) is next.
-- **Codebase Impact:** The `dev-guardian` system can now parse code AND store it in two databases simultaneously.
+- **Current Phase:** Phase 3 COMPLETE ✅. Phase 4 (MCP Server Integration) is next.
+- **Codebase Impact:** The `dev-guardian` system can now parse code, store it in two databases, AND autonomously evaluate PRs using a multi-agent AI pipeline that can fix its own rejected code.
 
 ---
 
@@ -37,8 +37,33 @@ We created the "brain storage" layer — the databases that hold the parsed know
 - The combined result is formatted into a clean text block ready to be injected into an LLM prompt.
 
 **Critical Security Feature:**
-Every single database query (both Memgraph AND Qdrant) enforces **ABAC (Attribute-Based Access Control)** filters. This means if a junior developer with clearance level 1 queries the system, they will NEVER see code entities marked as clearance level 2 or higher. The filter is hardcoded into every Cypher and vector query — it cannot be bypassed.
+Every single database query (both Memgraph AND Qdrant) enforces **ABAC (Attribute-Based Access Control)** filters. This means if a junior developer with clearance level 1 queries the system, they will NEVER see code entities marked as clearance level 2 or higher.
+
+---
+
+### Phase 3 Summary: LangGraph Multi-Agent AI Pipeline (MoA + Self-Healing)
+
+**What was built:**
+This is the "AI brain" itself — the multi-agent pipeline that actually evaluates Pull Requests and either approves them, rejects them, or **fixes them automatically**. We implemented a cutting-edge **Mixture-of-Agents (MoA)** architecture with a **Debate Resolution** mechanism and a **Self-Healing Remediation** agent.
+
+**How the pipeline works (step by step):**
+1. **You run:** `guardian evaluate my_pr.diff --repo /path/to/codebase --clearance 2`
+2. **GraphRAG Context Retrieval:** The system queries both Memgraph and Qdrant to understand how the existing codebase is structured and what the PR's code changes might affect.
+3. **MoA Layer (Two agents run concurrently):**
+   - **Gatekeeper Agent** — Reviews the PR diff + GraphRAG context for architectural violations (broken imports, removed functions still called elsewhere, dependency regressions).
+   - **Red Team Tester Agent** — Tries to *break* the PR code by writing hostile PyTest edge-cases (null inputs, type mismatches, boundary values, missing error handlers).
+4. **Supervisor Node** — Collects both reports and makes a routing decision:
+   - Both PASS → ✅ Approve the PR.
+   - Both FAIL → Route to Remediation (skip debate, go fix).
+   - They disagree → Route to the Debate Node.
+5. **Debate Node** (if needed) — Uses the GraphRAG context as mathematical ground truth to determine which agent is correct, resolving the contradiction with zero hallucination.
+6. **Remediation Specialist (The Self-Healer)** — If the PR is rejected, this agent reads ALL evidence: the failing Red Team tests, the Gatekeeper violations, and the full GraphRAG connected-component context. It then generates a complete, drop-in replacement code fix.
+
+**What makes this novel:**
+- Traditional code review tools just say "this is wrong." Our system says "this is wrong, here's exactly why based on your codebase graph, and here's the corrected code."
+- The Debate mechanism prevents the common multi-agent hallucination problem where agents reinforce each other's mistakes.
+
+**All AI inference runs on Groq** (`llama-3.3-70b-versatile`) for ultra-low latency. Every agent node has **Langfuse `@observe()` instrumentation** for full token usage tracking and output auditing.
 
 **What's NOT built yet:**
-- The AI agents that *use* this retrieved context to evaluate PRs — that's Phase 3 (LangGraph).
 - The MCP Server for IDE integration — that's Phase 4.

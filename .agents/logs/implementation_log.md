@@ -131,3 +131,60 @@ This log strictly tracks the phased execution of the Fusion Project.
 - `flake8 src/` → ✅ Zero errors
 - `pip install -e ".[dev]"` → ✅ All Phase 2 deps installed successfully
 
+---
+
+### [2026-03-21 22:55:00+05:30] — Phase 3: LangGraph Agent Workflows (MoA & Self-Healing)
+- **Agent**: Antigravity (langgraph_orchestrator persona)
+- **Status**: SUCCESS ✅
+- **Blueprint Reference**: Phase 3 — LangGraph Agent Workflows (MoA & Self-Healing Architecture)
+
+#### Files Created
+
+| File | Blueprint Component | Purpose |
+|------|-------------------|---------|
+| `backend/src/dev_guardian/agents/__init__.py` | Phase 3: Module layout | Agents subpackage init |
+| `backend/src/dev_guardian/agents/state.py` | Phase 3: LangGraph State Logic | `GuardianState` TypedDict with `Annotated[list, operator.add]` append-only messages |
+| `backend/src/dev_guardian/agents/gatekeeper.py` | Phase 3: Gatekeeper Agent (MoA) | Groq `llama-3.3-70b-versatile` architectural violation detector + Langfuse `@observe` |
+| `backend/src/dev_guardian/agents/red_team.py` | Phase 3: Red Team Tester (MoA) | Groq adversarial PyTest generator (temp=0.3) + Langfuse `@observe` |
+| `backend/src/dev_guardian/agents/remediation.py` | Phase 3: Remediation Specialist | Self-Healer agent generating corrected code diffs from evidence + Langfuse `@observe` |
+| `backend/src/dev_guardian/agents/graph.py` | Phase 3: StateGraph Topology | Full MoA → Supervisor → Debate/Remediation graph with conditional edges |
+
+#### Files Modified
+
+| File | Change |
+|------|--------|
+| `backend/pyproject.toml` | Added `langgraph>=0.2.0` |
+| `backend/src/dev_guardian/cli.py` | Replaced `evaluate` placeholder with live MoA pipeline invocation with `--repo` and `--clearance` ABAC options |
+
+#### Key Functions & Classes Created
+
+**`agents/state.py`** (Blueprint: *TypedDict State Logic*)
+- `class AgentReport(TypedDict)` → Schema for individual agent verdicts (agent_name, verdict, reasoning, details).
+- `class GuardianState(TypedDict)` → Central state: `pr_diff`, `graphrag_context`, `gatekeeper_report`, `redteam_report`, `debate_resolution`, `decision`, `remediation_diff`, `messages: Annotated[list, operator.add]`.
+
+**`agents/gatekeeper.py`** (Blueprint: *MoA Gatekeeper*)
+- `def gatekeeper_node(state) -> dict` → Langfuse-observed node. Invokes Groq with the Gatekeeper system prompt (temp=0.1). Parses structured `VERDICT/REASONING/DETAILS` output.
+- `def _parse_report(raw) -> AgentReport` → Deterministic parser.
+
+**`agents/red_team.py`** (Blueprint: *MoA Red Team Tester*)
+- `def redteam_node(state) -> dict` → Langfuse-observed node. Invokes Groq (temp=0.3 for creative exploits). Generates 2-4 targeted PyTest functions.
+- `def _parse_report(raw) -> AgentReport` → Deterministic parser.
+
+**`agents/remediation.py`** (Blueprint: *Self-Healer*)
+- `def remediation_node(state) -> dict` → Langfuse-observed node. Consumes BOTH agent reports + GraphRAG context. Generates corrected code diff (temp=0.2, max_tokens=4096).
+- `def _parse_remediation(raw) -> tuple[str, str]` → Extracts summary + code block from fenced markdown.
+
+**`agents/graph.py`** (Blueprint: *MoA + Debate + Remediation StateGraph*)
+- `def supervisor_node(state) -> dict` → Merges MoA reports. Logic: both pass→approve, both fail→remediate, disagree→debate.
+- `def debate_node(state) -> dict` → Groq temp=0.0 mediation using GraphRAG as ground truth evidence.
+- `def _route_after_supervisor(state) -> str` → Conditional edge: "approved" | "needs_debate" | "needs_remediation".
+- `def _route_after_debate(state) -> str` → Conditional edge: "approved" | "needs_remediation".
+- `def build_guardian_graph() -> StateGraph` → Compiles the full graph: entry→gatekeeper→red_team→supervisor→(debate|remediation|END).
+
+#### Verification
+- `black src/` → ✅ 2 files reformatted, 16 unchanged
+- `flake8 src/` → ✅ Zero errors
+- `pip install -e ".[dev]"` → ✅ langgraph installed
+- `guardian --help` → ✅ Shows 3 commands (index, evaluate, version)
+- `guardian evaluate --help` → ✅ Shows diff_file arg, --repo, --clearance options
+

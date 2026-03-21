@@ -52,10 +52,16 @@ def index(
     parser = ASTParser(language=language)
     results = parser.parse_directory(path)
 
+    typer.echo("[cyan]📡 Ingesting into GraphRAG (Memgraph + Qdrant)...[/cyan]")
+    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+    
+    retriever = HybridRetriever()
+    summary = retriever.ingest(results)
+
     typer.echo(
         f"[bold cyan]✅ Indexed {results.total_files} files — "
-        f"{results.total_nodes} Nodes, {results.total_edges} "
-        "Edges extracted.[/bold cyan]"
+        f"{summary['graph_nodes']} Memgraph Nodes, {summary['graph_edges']} Memgraph Edges, "
+        f"{summary['vectors_embedded']} Qdrant Vectors.[/bold cyan]"
     )
     logger.info(
         "index_complete",
@@ -67,24 +73,92 @@ def index(
 
 @app.command()
 def evaluate(
-    path: Annotated[
+    diff_file: Annotated[
         Path,
         typer.Argument(
-            help="Path to the PR diff file or directory to evaluate.",
+            help="Path to the PR diff file to evaluate.",
             exists=True,
+            file_okay=True,
+            dir_okay=False,
             resolve_path=True,
         ),
     ],
+    repo_path: Annotated[
+        Path,
+        typer.Option(
+            "--repo",
+            "-r",
+            help="Path to the indexed repository root.",
+            exists=True,
+            file_okay=False,
+            resolve_path=True,
+        ),
+    ] = Path("."),
+    clearance: Annotated[
+        int,
+        typer.Option(
+            "--clearance",
+            "-c",
+            help="ABAC clearance level (0=public, higher=restricted).",
+        ),
+    ] = 0,
 ) -> None:
-    """
-    Evaluate a PR diff against the codebase Knowledge Graph.
-    (Phase 3 placeholder).
-    """
-    typer.echo(
-        "[bold yellow]⚠️  Evaluation engine requires Phase 3 (LangGraph Agents). "
-        "Currently a placeholder.[/bold yellow]"
+    """Evaluate a PR diff against the codebase Knowledge Graph using MoA agents."""
+    from dev_guardian.agents.graph import build_guardian_graph
+    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+
+    logger.info("evaluate_start", diff_file=str(diff_file))
+    typer.echo(f"[bold green]🛡️  Evaluating PR diff:[/bold green] {diff_file}")
+
+    # Read the diff
+    pr_diff = diff_file.read_text(encoding="utf-8")
+
+    # Retrieve GraphRAG context
+    typer.echo("[cyan]📡 Querying GraphRAG (Memgraph + Qdrant)...[/cyan]")
+    retriever = HybridRetriever()
+    rag_result = retriever.retrieve(
+        query=pr_diff[:500],  # use first 500 chars as query
+        user_clearance=clearance,
+        top_k=10,
     )
-    logger.warning("evaluate_not_implemented")
+    context = rag_result.get("merged_context", "")
+
+    # Build and invoke the graph
+    typer.echo("[cyan]🤖 Invoking MoA Agent Pipeline...[/cyan]")
+    graph = build_guardian_graph()
+    result = graph.invoke(
+        {
+            "pr_diff": pr_diff,
+            "repo_path": str(repo_path),
+            "user_clearance": clearance,
+            "graphrag_context": context,
+            "messages": [],
+        }
+    )
+
+    # Display results
+    decision = result.get("decision", "unknown")
+    messages = result.get("messages", [])
+
+    typer.echo("")
+    for msg in messages:
+        typer.echo(f"  {msg}")
+    typer.echo("")
+
+    if decision == "approve":
+        typer.echo("[bold green]✅ APPROVED — PR is safe to merge.[/bold green]")
+    elif decision in ("remediate", "remediated"):
+        typer.echo(
+            "[bold yellow]🔧 REMEDIATED — PR had issues. "
+            "Suggested fix below:[/bold yellow]"
+        )
+        fix = result.get("remediation_diff", "")
+        if fix:
+            typer.echo(f"\n```\n{fix}\n```")
+    else:
+        typer.echo(f"[bold red]❌ Decision: {decision}[/bold red]")
+
+    logger.info("evaluate_complete", decision=decision)
 
 
 @app.command()

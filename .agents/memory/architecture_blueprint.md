@@ -39,13 +39,17 @@ To prevent AI hallucination and scope-creep, the implementation MUST strictly fo
   - The **GraphRAG FGA (Fine-Grained Access)** logic: Every retrieval query MUST be hardcoded to enforce `WHERE node.clearance <= $user_clearance` based on metadata tags to protect restricted proprietary code contexts.
   - A unified "Hybrid Retriever" class that queries both DBs and merges the context.
 
-### Phase 3: LangGraph Agent Workflows
-- **Objective**: Instantiate the multi-agent cyclic reasoning orchestration.
+### Phase 3: LangGraph Agent Workflows (MoA & Self-Healing Architecture)
+- **Objective**: Instantiate the multi-agent orchestration using Mixture-of-Agents (MoA) and Debate patterns to not only evaluate PRs but actively *fix* them.
 - **Components**:
-  - **Gatekeeper Agent**: Reviews the incoming PR Diff + Hybrid GraphRAG Context to look for architectural violations.
-  - **Red Team Tester Agent**: An adversarial agent that uses the GraphRAG relationships to write deterministic PyTest edge-cases specifically aimed at breaking the PR logic.
-  - **LangGraph State Logic**: Implement `TypedDict` workflow states and conditional edges chaining the Red Team and Gatekeeper together.
-  - **LLMOps**: Instrument the Graph nodes with Langfuse `@observe()` to track Groq token/latency economics and output DLP masks to prevent secret leakage.
+  - **MoA Execution Layer**: 
+    - **Gatekeeper Agent**: Concurrently reviews the PR Diff + Hybrid GraphRAG Context for architectural/dependency violations.
+    - **Red Team Tester Agent**: Concurrently writes deterministic PyTest edge-cases specifically aimed at breaking the PR logic.
+  - **The Debate & Remediation Layer**:
+    - **Debate Node**: If the Gatekeeper and Red Team Tester disagree on vulnerability severity, they enter a mathematically grounded 1-turn debate to prevent hallucinations.
+    - **Remediation Specialist Agent (The Self-Healer)**: If a PR is rejected, this new agent uses the failing Red Team test trace and the entire GraphRAG connected-components context to write a perfect, drop-in replacement diff to fix the user's code.
+  - **LangGraph State Logic**: Implement `TypedDict` workflow states, parallel branch execution for MoA, and cyclic routing for remediation loops.
+  - **LLMOps**: Instrument the Graph nodes with Langfuse `@observe()` to track Groq token economics and prevent secret leakage.
 
 ### Phase 4: MCP Server Integration
 - **Objective**: Wrap the engine in Anthropic's Model Context Protocol (MCP) to enable immediate IDE Shift-Left governance.

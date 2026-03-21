@@ -35,9 +35,10 @@ class GuardianSettings(BaseSettings):
     embedding_model: str = "jinaai/jina-embeddings-v2-base-code"
 
     class Config:
-        env_file = "backend/.env"
+        env_file = (".env", "backend/.env")
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
 def get_settings() -> GuardianSettings:
