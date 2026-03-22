@@ -3,8 +3,8 @@ Typer CLI Interface for Agentic Dev Guardian.
 
 Architecture Blueprint Reference: Phase 1 — Core Python Package & AST Parsers.
 This module exposes the primary `guardian` CLI commands:
-  - `guardian index <path>`: Parse a codebase and extract its AST structure.
-  - `guardian evaluate <path>`: (Placeholder) Evaluate a PR diff against the graph.
+    - `guardian index <path>`: Parse a codebase and ingest AST into GraphRAG.
+    - `guardian evaluate <path>`: Evaluate a PR diff using GraphRAG + MoA agents.
   - `guardian version`: Print the current package version.
 """
 
@@ -43,7 +43,7 @@ def index(
         typer.Option("--language", "-l", help="Programming language to parse."),
     ] = "python",
 ) -> None:
-    """Parse a codebase directory and extract AST Nodes & Edges using Tree-sitter."""
+    """Parse code with Tree-sitter and ingest into Memgraph + Qdrant."""
     from dev_guardian.parsers.ast_parser import ASTParser
 
     logger.info("index_start", path=str(path), language=language)
@@ -103,7 +103,7 @@ def evaluate(
         ),
     ] = 0,
 ) -> None:
-    """Evaluate a PR diff against the codebase Knowledge Graph using MoA agents."""
+    """Evaluate a PR diff with GraphRAG context and the MoA decision pipeline."""
     from dev_guardian.agents.graph import build_guardian_graph
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
 
@@ -167,5 +167,27 @@ def version() -> None:
     typer.echo(f"Agentic Dev Guardian v{__version__}")
 
 
+@app.command()
+def serve() -> None:
+    """Start the MCP server for IDE integration (stdio transport).
+
+    Launches the Model Context Protocol server that exposes
+    Guardian tools (query_guardian_graph, evaluate_pr_diff,
+    impact_analysis, index_codebase) to any MCP-compatible IDE
+    such as Cursor, Claude Desktop, or Windsurf.
+
+    The server communicates over stdin/stdout using the MCP protocol.
+    Configure your IDE's MCP settings to point to this command.
+    """
+    from dev_guardian.mcp_server import run_server
+
+    typer.echo(
+        "[bold cyan]🚀 Starting MCP Server (stdio transport)...[/bold cyan]",
+        err=True,
+    )
+    run_server()
+
+
 if __name__ == "__main__":
     app()
+

@@ -67,3 +67,75 @@ This is the "AI brain" itself — the multi-agent pipeline that actually evaluat
 
 **What's NOT built yet:**
 - The MCP Server for IDE integration — that's Phase 4.
+
+---
+
+### 2026-03-22 Update: Logic & Correctness Hardening
+
+**What changed (simple view):**
+We performed a focused reliability pass to remove hidden correctness bugs that could quietly degrade the system over time.
+
+**What was fixed:**
+1. **Duplicate vector prevention**
+- Before: re-indexing could create duplicate semantic vectors.
+- Now: vector IDs are deterministic, so re-indexing updates existing entries consistently.
+
+2. **Graph edge safety across files**
+- Before: similarly named symbols in different files could be linked incorrectly.
+- Now: edge insertion resolves targets with file-aware identity, reducing cross-file symbol collisions.
+
+3. **Cleaner impact analysis**
+- Before: impact analysis traversed every relationship type and produced noisy false positives.
+- Now: impact analysis follows CALLS paths only, which better represents execution impact.
+
+4. **Safer decision routing**
+- Before: WARN+FAIL outcomes could route to debate unexpectedly.
+- Now: WARN+FAIL routes directly to remediation, which is the safer policy.
+
+5. **Parser correctness improvements**
+- Enforced explicit python-only support (instead of silently accepting unsupported language values).
+- Improved import parsing for statements like `import a, b as c` and `from x import y`.
+- Corrected parsed-file counting so failed file reads are not counted as successful parses.
+
+6. **Output parsing robustness**
+- Remediation code extraction now handles a wider variety of markdown code-fence language tags.
+
+7. **Code clarity cleanup**
+- Removed redundant details-parsing branches in Gatekeeper and Red Team report parsers.
+- Updated CLI docstrings so behavior descriptions match what commands actually do.
+
+**Impact for the project:**
+- Improves trust in indexing results and retrieval quality.
+- Reduces false alarms in architectural impact checks.
+- Makes remediation routing behavior more predictable and policy-consistent.
+- Lowers long-run data drift risk in the vector store.
+
+**Project phase status:**
+- Phase 3 remains complete.
+- Phase 4 MCP Server Integration is **COMPLETE** ✅.
+- **Phase 5 (Project Expansion)** has been formally brainstormed and documented.
+
+---
+
+### Phase 4 Summary: MCP Server Integration (Model Context Protocol)
+
+**What was built:**
+The Guardian's internal GraphRAG engine and LangGraph MoA pipeline are now exposed to external IDE assistants (Cursor, Claude Desktop, Windsurf) via the Anthropic Model Context Protocol.
+
+**New files created:**
+- `mcp_server.py` — The MCP server entry point using `FastMCP` with `stdio` transport.
+
+**What it exposes:**
+- **4 MCP Tools**: `query_guardian_graph`, `evaluate_pr_diff`, `impact_analysis`, `index_codebase`
+- **2 MCP Resources**: `guardian://status` (system health), `guardian://security-policy` (ABAC rules)
+- **2 MCP Prompts**: `review_pr` (structured PR review), `investigate_function` (deep-dive analysis)
+
+**How to use it:**
+- Run `guardian serve` from the terminal to start the MCP stdio server.
+- Configure your IDE's MCP settings to point to the `guardian serve` command.
+- The IDE agent can then natively invoke Guardian tools during coding sessions.
+
+**What was changed in existing files:**
+- `pyproject.toml` — Added `mcp[cli]>=1.0.0` dependency.
+- `cli.py` — Added the `guardian serve` command.
+

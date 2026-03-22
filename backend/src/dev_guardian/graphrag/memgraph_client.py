@@ -21,6 +21,7 @@ from dev_guardian.core.logging import get_logger
 from dev_guardian.parsers.models import (
     ASTEdge,
     ASTNode,
+    EdgeType,
     ParseResult,
 )
 
@@ -149,9 +150,18 @@ class MemgraphClient:
         If the target node doesn't exist yet (e.g., external import),
         it is created as a stub node with default ABAC clearance.
         """
+        source_path = edge.file_path
+        target_path = self._resolve_target_path(edge)
+
         query = f"""
-        MERGE (src:ASTNode {{name: $source}})
-        MERGE (tgt:ASTNode {{name: $target}})
+        MERGE (src:ASTNode {{name: $source, file_path: $source_path}})
+        ON CREATE SET src.node_type = 'external',
+                      src.owner_team = 'unassigned',
+                      src.clearance_level = 0
+        MERGE (tgt:ASTNode {{name: $target, file_path: $target_path}})
+        ON CREATE SET tgt.node_type = 'external',
+                      tgt.owner_team = 'unassigned',
+                      tgt.clearance_level = 0
         MERGE (src)-[r:{edge.edge_type.value.upper()}]->(tgt)
         SET r.file_path = $file_path
         """
@@ -160,9 +170,59 @@ class MemgraphClient:
             {
                 "source": edge.source,
                 "target": edge.target,
+                "source_path": source_path,
+                "target_path": target_path,
                 "file_path": edge.file_path,
             },
         )
+
+    def _resolve_target_path(self, edge: ASTEdge) -> str:
+        """
+        Resolve the best target file_path for an edge target name.
+
+        Priority:
+        1. Same file as the edge (for local functions/methods).
+        2. Unique global match by name.
+        3. Stable unresolved namespace to avoid cross-file node corruption.
+        """
+        same_file_query = """
+        MATCH (t:ASTNode {name: $target, file_path: $file_path})
+        RETURN t.file_path AS file_path
+        LIMIT 1
+        """
+        same_file = list(
+            self._db.execute_and_fetch(
+                same_file_query,
+                {
+                    "target": edge.target,
+                    "file_path": edge.file_path,
+                },
+            )
+        )
+        if same_file:
+            return str(same_file[0]["file_path"])
+
+        # Imports usually refer to modules, not local symbols.
+        if edge.edge_type == EdgeType.IMPORTS:
+            return "__module__"
+
+        candidates_query = """
+        MATCH (t:ASTNode {name: $target})
+        RETURN DISTINCT t.file_path AS file_path
+        LIMIT 2
+        """
+        candidates = list(
+            self._db.execute_and_fetch(
+                candidates_query,
+                {
+                    "target": edge.target,
+                },
+            )
+        )
+        if len(candidates) == 1:
+            return str(candidates[0]["file_path"])
+
+        return "__unresolved__"
 
     def query_node_by_name(
         self,
@@ -217,7 +277,7 @@ class MemgraphClient:
             List of impacted node property dictionaries.
         """
         query = f"""
-        MATCH (root:ASTNode {{name: $name}})<-[*1..{max_depth}]-(caller:ASTNode)
+        MATCH (root:ASTNode {{name: $name}})<-[:CALLS*1..{max_depth}]-(caller:ASTNode)
         WHERE root.clearance_level <= $user_clearance
           AND caller.clearance_level <= $user_clearance
         RETURN DISTINCT caller AS impacted

@@ -188,3 +188,84 @@ This log strictly tracks the phased execution of the Fusion Project.
 - `guardian --help` → ✅ Shows 3 commands (index, evaluate, version)
 - `guardian evaluate --help` → ✅ Shows diff_file arg, --repo, --clearance options
 
+---
+
+### [2026-03-22 14:34:09+05:30] — Logic/Correctness Hardening Pass (Post-Phase 3 Stabilization)
+- **Agent**: GitHub Copilot (logic_and_correctness_audit remediation pass)
+- **Status**: SUCCESS ✅
+- **Blueprint Reference**:
+  - Phase 1: Core Python Package & AST Parsers (parser correctness)
+  - Phase 2: Memgraph & Qdrant Integration (graph/vector correctness)
+  - Phase 3: LangGraph Agent Workflows (routing correctness)
+
+#### Files Modified
+
+| File | Category | Why |
+|------|----------|-----|
+| `backend/src/dev_guardian/graphrag/qdrant_client.py` | Determinism | Remove non-deterministic point IDs to prevent duplicate vectors across re-indexing runs |
+| `backend/src/dev_guardian/graphrag/memgraph_client.py` | Graph correctness | Prevent cross-file node edge corruption and reduce impact-analysis false positives |
+| `backend/src/dev_guardian/agents/graph.py` | Workflow correctness | Align WARN+FAIL decision route with intended remediation policy |
+| `backend/src/dev_guardian/parsers/ast_parser.py` | Parser correctness | Enforce supported language contract, improve import extraction, and fix parsed-file counting semantics |
+| `backend/src/dev_guardian/agents/remediation.py` | Output robustness | Parse fenced code blocks robustly across variable language tags |
+| `backend/src/dev_guardian/agents/gatekeeper.py` | Parser cleanup | Remove redundant DETAILS parsing branch |
+| `backend/src/dev_guardian/agents/red_team.py` | Parser cleanup | Remove redundant DETAILS parsing branch |
+| `backend/src/dev_guardian/cli.py` | Contract clarity | Align CLI docstrings with actual side effects/behavior |
+
+#### Functions Added or Updated (Exact)
+
+**`backend/src/dev_guardian/graphrag/qdrant_client.py`**
+- Added: `def _stable_point_id(node: ASTNode) -> int`
+  - Computes stable 63-bit point IDs from SHA-256 digest of immutable node identity fields.
+  - Structural outcome: Qdrant upsert keys are now deterministic across process restarts.
+- Updated: `def ingest_nodes(self, nodes: list[ASTNode]) -> int`
+  - Replaced runtime `hash(...)` ID generation with `_stable_point_id(...)`.
+
+**`backend/src/dev_guardian/graphrag/memgraph_client.py`**
+- Added: `def _resolve_target_path(self, edge: ASTEdge) -> str`
+  - Resolves edge target identity using same-file preference, unique global fallback, or unresolved namespace.
+  - Structural outcome: reduces accidental edge attachment to wrong same-name symbols.
+- Updated: `def _upsert_edge(self, edge: ASTEdge) -> None`
+  - Source/target node merges now use `name + file_path` identity fields.
+  - Adds safe defaults for externally created stub nodes.
+- Updated: `def query_impact_analysis(self, function_name: str, user_clearance: int = 0, max_depth: int = 3) -> list[dict]`
+  - Traversal restricted to `:CALLS` relationships only.
+
+**`backend/src/dev_guardian/agents/graph.py`**
+- Updated: `def supervisor_node(state: GuardianState) -> dict`
+  - Added explicit `{warn, fail} -> remediate` rule before generic disagreement branch.
+
+**`backend/src/dev_guardian/parsers/ast_parser.py`**
+- Updated: `def __init__(self, language: str = "python") -> None`
+  - Now validates supported language and rejects non-python values explicitly.
+- Updated: `def parse_directory(self, directory: Path) -> ParseResult`
+  - `file_count` increments only when `parse_file` succeeds.
+- Updated: `def _extract_imports(...) -> None`
+  - Parses import targets by statement form (`from ... import ...` and `import a, b as c`) and emits one IMPORTS edge per module target.
+
+**`backend/src/dev_guardian/agents/remediation.py`**
+- Updated: `def _parse_remediation(raw: str) -> tuple[str, str]`
+  - Language-line stripping now regex-based to handle varied fenced code block tags.
+
+**`backend/src/dev_guardian/agents/gatekeeper.py`**
+- Updated: `def _parse_report(raw: str) -> AgentReport`
+  - Removed redundant per-line DETAILS assignment and retained authoritative section extraction.
+
+**`backend/src/dev_guardian/agents/red_team.py`**
+- Updated: `def _parse_report(raw: str) -> AgentReport`
+  - Removed redundant per-line DETAILS assignment and retained authoritative section extraction.
+
+**`backend/src/dev_guardian/cli.py`**
+- Updated command/module docstrings for `index` and `evaluate` to match actual side effects and runtime behavior.
+
+#### Mapping Back to Architecture Blueprint
+
+- **Phase 1 constraints (parser determinism + correctness):** language contract, import extraction semantics, and parse accounting were hardened.
+- **Phase 2 constraints (GraphRAG reliability + access-safe retrieval):** deterministic vector IDs and cleaner structural impact traversal reduce false positives/duplicate context.
+- **Phase 3 constraints (decision graph correctness):** supervisor routing now matches intended safe remediation behavior for warn/fail outcomes.
+
+#### Verification Performed
+
+- Ran diagnostics for `backend/src/dev_guardian` via workspace error checker.
+- Result: **No errors found**.
+- Additional audit artifact created: `.agents/logs/logic_correctness_audit_2026-03-22.md`.
+

@@ -47,9 +47,16 @@ class ASTParser:
         Args:
             language: Programming language to parse (currently 'python').
         """
-        self.language = language
+        normalized_language = language.lower()
+        if normalized_language != "python":
+            raise ValueError(
+                "Unsupported language: "
+                f"{language}. Only 'python' is currently supported."
+            )
+
+        self.language = normalized_language
         self.parser = Parser(PY_LANGUAGE)
-        logger.info("ast_parser_init", language=language)
+        logger.info("ast_parser_init", language=self.language)
 
     def parse_file(self, file_path: Path) -> ParseResult:
         """
@@ -106,7 +113,8 @@ class ASTParser:
             result = self.parse_file(file_path)
             all_nodes.extend(result.nodes)
             all_edges.extend(result.edges)
-            file_count += 1
+            if result.total_files == 1:
+                file_count += 1
 
             logger.debug(
                 "file_parsed",
@@ -294,10 +302,22 @@ class ASTParser:
         source = parent_name or "__module__"
         if node.text:
             import_text = node.text.decode("utf-8")
-            # Extract the module name from the import statement
-            parts = import_text.replace("from ", "").replace("import ", "").split()
-            if parts:
-                target = parts[0]
+            targets: list[str] = []
+
+            if import_text.startswith("from "):
+                # from pkg.subpkg import foo, bar -> IMPORTS pkg.subpkg
+                module_part = import_text[5:].split(" import ", 1)[0].strip()
+                if module_part:
+                    targets.append(module_part)
+            elif import_text.startswith("import "):
+                # import a, b as c -> IMPORTS a and b
+                imported = import_text[7:]
+                for chunk in imported.split(","):
+                    name = chunk.strip().split(" as ", 1)[0].strip()
+                    if name:
+                        targets.append(name)
+
+            for target in targets:
                 edges.append(
                     ASTEdge(
                         source=source,

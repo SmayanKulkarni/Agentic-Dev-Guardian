@@ -19,6 +19,9 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     Returns:
         A structlog BoundLogger with JSON rendering and timestamp injection.
     """
+    import sys
+    from typing import cast
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -28,9 +31,8 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
-    from typing import cast
 
     return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))

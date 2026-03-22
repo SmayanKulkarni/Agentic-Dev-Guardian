@@ -109,8 +109,6 @@ def _parse_report(raw: str) -> AgentReport:
                 verdict = v
         elif upper.startswith("REASONING:"):
             reasoning = line.split(":", 1)[1].strip()
-        elif upper.startswith("DETAILS:"):
-            details = line.split(":", 1)[1].strip()
 
     # Capture the full test code block after DETAILS:
     if "DETAILS:" in raw:

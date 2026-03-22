@@ -95,10 +95,12 @@ def supervisor_node(state: GuardianState) -> dict:
         decision = "approve"
     elif gk_v == "fail" and rt_v == "fail":
         decision = "remediate"
+    elif {gk_v, rt_v} == {"warn", "fail"}:
+        decision = "remediate"
     elif gk_v != rt_v:
         decision = "debate"
     else:
-        # Both warn, or warn+fail combo
+        # Both warn
         decision = "remediate"
 
     return {

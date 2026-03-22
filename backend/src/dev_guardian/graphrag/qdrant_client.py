@@ -12,6 +12,7 @@ Data Minimization Security Guardrail — proprietary code never
 leaves the machine during vectorization.
 """
 
+import hashlib
 from typing import Optional
 
 from fastembed import TextEmbedding
@@ -147,8 +148,8 @@ class QdrantCodeClient:
         embeddings = list(self._embedder.embed(texts))
 
         points = []
-        for i, (node, vector) in enumerate(zip(nodes, embeddings)):
-            point_id = hash(f"{node.name}:{node.file_path}:{node.start_line}") % (2**63)
+        for node, vector in zip(nodes, embeddings):
+            point_id = self._stable_point_id(node)
             points.append(
                 PointStruct(
                     id=point_id,
@@ -259,3 +260,10 @@ class QdrantCodeClient:
         if node.docstring:
             parts.append(f"docs: {node.docstring}")
         return " | ".join(parts)
+
+    @staticmethod
+    def _stable_point_id(node: ASTNode) -> int:
+        """Build a stable 63-bit point ID for deterministic upserts."""
+        identity = f"{node.name}:{node.file_path}:{node.start_line}:{node.end_line}"
+        digest = hashlib.sha256(identity.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], byteorder="big") & ((1 << 63) - 1)

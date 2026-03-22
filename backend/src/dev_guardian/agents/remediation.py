@@ -12,6 +12,8 @@ the system from a passive reviewer into an active code fixer.
 Uses Groq for ultra-low latency LLM inference.
 """
 
+import re
+
 from groq import Groq
 from langfuse import observe
 
@@ -138,10 +140,11 @@ def _parse_remediation(raw: str) -> tuple[str, str]:
         if "```" in diff_section:
             parts = diff_section.split("```")
             if len(parts) >= 2:
-                code_block = parts[1]
-                # Remove language identifier (e.g., "python\n")
-                if code_block.startswith(("python", "diff")):
-                    code_block = code_block.split("\n", 1)[1]
+                code_block = parts[1].lstrip()
+                # Strip optional markdown language identifier line.
+                lang_line = re.match(r"^[A-Za-z0-9_+.-]+\n", code_block)
+                if lang_line:
+                    code_block = code_block[lang_line.end() :]
                 diff = code_block.strip()
             else:
                 diff = diff_section

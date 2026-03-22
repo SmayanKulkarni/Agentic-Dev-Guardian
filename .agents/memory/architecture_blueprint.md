@@ -58,6 +58,16 @@ To prevent AI hallucination and scope-creep, the implementation MUST strictly fo
   - `@mcp.tool()` wrapper functions that expose `query_guardian_graph()` and `evaluate_local_diff()` directly to the developer's Claude Desktop / IDE instance.
   - Dynamic Context Injection via `@mcp.resource()` to serve real-time repository security guidelines to the IDE.
 
+### Phase 5: Advanced Guardian Capabilities (Project Expansion)
+- **Objective**: Extend the baseline PR-governance system into a multi-domain autonomous engineering lifecycle manager leveraging Memgraph, Qdrant, and LangGraph.
+- **Components**:
+  - **Self-Healing Codebase Maintenance (Auto-Migrations)**: The `Remediation` agent generates multi-PR sequences for systemic upgrades by querying Memgraph dependency trees and scheduling Pytest verification.
+  - **Automated Incident Response (SRE Sandbox)**: Webhooks ingest Datadog/Sentry logs into Qdrant. The LangGraph Gatekeeper flags the stack trace, retrieves the breaking commit, and initiates a Sandbox Red-Team run to mathematically reproduce the production bug before submitting a hotfix patch.
+  - **Infinite Auto-Generating Documentation**: Construct an asynchronous worker that translates the semantic outputs of agent PR debates into persistent Architectural Decision Records (ADRs) stored in Qdrant, syncing to a real-time Docusaurus/MkDocs website.
+  - **Live PII & Taint-Tracking Auditor**: Extend the Memgraph AST schema with `TAINTED_DATA` labels to mathematically trace PII definitions. Enforce pipeline gates that immediately fail PRs leaking data to external APIs.
+  - **Cloud Cost & FinOps Optimization Architect**: Inject external AWS Billing / OpenTelemetry execution times as numeric edge-weights onto Memgraph functions to autonomously rewrite expensive ORM calls into optimized SQL queries.
+  - **Autonomous Developer Onboarding Mentorship Engine**: Register specific MCP Tools connecting the LangGraph engine explicitly into live IDE buffers. Pre-configure synthetic onboarding branches where Guardian tracks beginner keystrokes via MCP to provide blame-free pair programming.
+
 ---
 
 ## Security Guardrails & Hard Constraints
