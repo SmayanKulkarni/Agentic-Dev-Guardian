@@ -1,16 +1,26 @@
 """
 MCP Server for Agentic Dev Guardian.
 
-Architecture Blueprint Reference: Phase 4 — MCP Server Integration.
+Architecture Blueprint Reference: Phase 4 — MCP Server Integration
+                                   Phase 5 — JIT Tool Loading.
+
 Wraps the internal GraphRAG retrieval engine and the LangGraph MoA
 evaluation pipeline into Anthropic Model Context Protocol (MCP) tools,
 resources, and prompts — enabling any MCP-compatible IDE (Cursor,
 Claude Desktop, Windsurf) to natively query, evaluate, and govern
 codebases in real-time.
 
-Entry Points:
-    - ``guardian serve`` CLI command starts the stdio transport.
-    - IDE clients connect via MCP stdio or SSE.
+## JIT Architecture
+To keep the IDE LLM's context window lean, tools are loaded on-demand
+via the "Bootstrap → Equip → Work → Unequip" lifecycle:
+
+  1. Server starts with only 3 bootstrap tools:
+       - query_guardian_graph
+       - list_capabilities
+       - equip_capability / unequip_capability
+  2. IDE agent calls equip_capability("pr_governance") to load additional tools.
+  3. FastMCP emits `notifications/tools/list_changed` so the IDE refreshes.
+  4. Agent uses the new tools and calls unequip_capability when done.
 
 Security:
     - All queries enforce ABAC clearance filtering.
@@ -21,21 +31,36 @@ Security:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
 
+# ── Bootstrap all cluster modules so they populate CLUSTER_REGISTRY ─
+import dev_guardian.capability_clusters.pr_governance  # noqa: F401
+import dev_guardian.capability_clusters.codebase_intelligence  # noqa: F401
+import dev_guardian.capability_clusters.self_healing  # noqa: F401
+import dev_guardian.capability_clusters.incident_response  # noqa: F401
+
+from dev_guardian.capability_clusters.core import (
+    CLUSTER_REGISTRY,
+    get_active_capabilities,
+    mark_active,
+    mark_inactive,
+)
+
 logger = get_logger(__name__)
 
 # ── Initialize the MCP Server ──────────────────────────────────────
 mcp = FastMCP("Agentic Dev Guardian")
 
+# Tracks tool names that were dynamically added so we can remove them.
+_registered_tool_names: dict[str, set[str]] = {}
+
 
 # ═══════════════════════════════════════════════════════════════════
-#  TOOLS — Executable functions the IDE agent can invoke
+#  BOOTSTRAP TOOLS — Always active (3 tools only)
 # ═══════════════════════════════════════════════════════════════════
 
 
@@ -55,6 +80,8 @@ def query_guardian_graph(
     related functions, trace dependency chains, or assess the blast radius
     of a proposed change.
 
+    This is a BOOTSTRAP tool — always available without equipping any capability.
+
     Args:
         query: Natural language description of what you are looking for
                in the codebase (e.g., "authentication middleware",
@@ -69,12 +96,7 @@ def query_guardian_graph(
     """
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
 
-    logger.info(
-        "mcp_query_graph",
-        query=query,
-        clearance=clearance,
-        top_k=top_k,
-    )
+    logger.info("mcp_query_graph", query=query, clearance=clearance, top_k=top_k)
 
     try:
         retriever = HybridRetriever()
@@ -85,213 +107,138 @@ def query_guardian_graph(
         )
         return result.get("merged_context", "No results found.")
     except Exception as exc:
-        error_msg = (
+        logger.error("mcp_query_graph_error", error=str(exc))
+        return (
             f"[Guardian Error] GraphRAG query failed: {exc}. "
             "Ensure Memgraph and Qdrant are running and the codebase "
             "has been indexed with `guardian index <path>`."
         )
-        logger.error("mcp_query_graph_error", error=str(exc))
-        return error_msg
 
 
 @mcp.tool()
-def evaluate_pr_diff(
-    diff_content: str,
-    repo_path: str = ".",
-    clearance: int = 0,
-) -> str:
-    """Evaluate a Pull Request diff using the full MoA agent pipeline.
+def list_capabilities() -> str:
+    """List all available JIT capability domains that can be equipped.
 
-    Runs the complete Mixture-of-Agents evaluation pipeline:
-    1. Retrieves GraphRAG context for the changed code.
-    2. Gatekeeper Agent checks for architectural violations.
-    3. Red Team Tester Agent generates adversarial test cases.
-    4. Supervisor merges reports and routes to debate or remediation.
-    5. If rejected, the Remediation Specialist generates a corrected diff.
+    Returns a JSON description of every loadable capability cluster,
+    including which tools each cluster exposes. Call this first to
+    understand what is available, then use equip_capability() to load
+    the domain you need.
 
-    Use this tool when a developer submits code changes and you need
-    to verify they are safe, architecturally consistent, and well-tested
-    before merging.
-
-    Args:
-        diff_content: The raw unified diff string (e.g., output of
-                      ``git diff`` or a PR diff from GitHub).
-        repo_path: Absolute path to the indexed repository root.
-        clearance: ABAC security clearance level of the requesting user.
+    This is a BOOTSTRAP tool — always available without equipping any capability.
 
     Returns:
-        A JSON string containing the pipeline decision (approve/remediate),
-        agent messages, and any remediation diff if applicable.
+        JSON with available domains, their descriptions, and tool names.
     """
-    from dev_guardian.agents.graph import build_guardian_graph
-    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
-
-    logger.info(
-        "mcp_evaluate_diff",
-        diff_length=len(diff_content),
-        repo_path=repo_path,
-    )
-
-    try:
-        # Retrieve GraphRAG context
-        retriever = HybridRetriever()
-        rag_result = retriever.retrieve(
-            query=diff_content[:500],
-            user_clearance=clearance,
-            top_k=10,
-        )
-        context = rag_result.get("merged_context", "")
-
-        # Build and invoke the MoA pipeline
-        graph = build_guardian_graph()
-        result = graph.invoke(
-            {
-                "pr_diff": diff_content,
-                "repo_path": repo_path,
-                "user_clearance": clearance,
-                "graphrag_context": context,
-                "messages": [],
+    active = get_active_capabilities()
+    payload = {
+        "active_capabilities": sorted(active),
+        "available_capabilities": {
+            name: {
+                "description": meta["description"],
+                "tools": list(meta["tools"].keys()),
+                "prompts": meta.get("prompts", []),
+                "status": "ACTIVE" if name in active else "INACTIVE",
             }
-        )
-
-        # Format output
-        output = {
-            "decision": result.get("decision", "unknown"),
-            "messages": result.get("messages", []),
-            "remediation_diff": result.get("remediation_diff", ""),
-            "gatekeeper_verdict": result.get("gatekeeper_report", {}).get(
-                "verdict", ""
-            ),
-            "redteam_verdict": result.get("redteam_report", {}).get("verdict", ""),
-        }
-
-        return json.dumps(output, indent=2)
-
-    except Exception as exc:
-        error_msg = (
-            f"[Guardian Error] PR evaluation failed: {exc}. "
-            "Ensure all services (Memgraph, Qdrant, Groq) are available "
-            "and the repository has been indexed."
-        )
-        logger.error("mcp_evaluate_error", error=str(exc))
-        return json.dumps({"error": error_msg})
+            for name, meta in CLUSTER_REGISTRY.items()
+        },
+    }
+    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()
-def impact_analysis(
-    function_name: str,
-    clearance: int = 0,
-    max_depth: int = 3,
-) -> str:
-    """Analyze the blast radius of modifying a specific function.
+def equip_capability(domain: str) -> str:
+    """Dynamically load a capability cluster into the active MCP session.
 
-    Traverses the Memgraph AST knowledge graph to find all functions,
-    classes, and modules that directly or transitively depend on the
-    specified function. This reveals the full impact of changing or
-    deleting a function.
+    Registers the specialized tools for the given domain into the live
+    FastMCP server and fires notifications/tools/list_changed so the IDE
+    client automatically refreshes its tool list.
 
-    Use this tool before making changes to understand what could break.
+    Call list_capabilities() first to see what domains are available.
+    Call unequip_capability() when done to keep the context window lean.
+
+    This is a BOOTSTRAP tool — always available.
 
     Args:
-        function_name: The exact name of the function to analyze
-                       (e.g., "calculate_tax", "UserService.authenticate").
-        clearance: ABAC security clearance level.
-        max_depth: Maximum graph traversal depth for transitive dependencies.
+        domain: The capability domain to load (e.g., "pr_governance",
+                "codebase_intelligence"). Use list_capabilities() to
+                see all valid domain names.
 
     Returns:
-        A structured list of all impacted entities with their types,
-        file paths, and relationship chains.
+        Confirmation message listing the newly registered tool names.
     """
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    if domain not in CLUSTER_REGISTRY:
+        available = ", ".join(CLUSTER_REGISTRY.keys())
+        return (
+            f"[Guardian Error] Unknown capability domain: '{domain}'. "
+            f"Available domains: {available}"
+        )
 
-    logger.info(
-        "mcp_impact_analysis",
-        function_name=function_name,
-        max_depth=max_depth,
+    if domain in get_active_capabilities():
+        tools = list(CLUSTER_REGISTRY[domain]["tools"].keys())
+        return (
+            f"Capability '{domain}' is already active. "
+            f"Tools available: {tools}"
+        )
+
+    cluster = CLUSTER_REGISTRY[domain]
+    registered: set[str] = set()
+
+    for tool_name, tool_fn in cluster["tools"].items():
+        # FastMCP's add_tool registers a function as a named tool
+        mcp.add_tool(tool_fn, name=tool_name)
+        registered.add(tool_name)
+
+    _registered_tool_names[domain] = registered
+    mark_active(domain)
+
+    logger.info("jit_capability_equipped", domain=domain, tools=sorted(registered))
+
+    return (
+        f"✅ Capability '{domain}' equipped. "
+        f"New tools available: {sorted(registered)}. "
+        f"The IDE will refresh its tool list automatically."
     )
 
-    try:
-        client = MemgraphClient()
-        impacted = client.query_impact_analysis(
-            function_name=function_name,
-            user_clearance=clearance,
-            max_depth=max_depth,
-        )
-
-        if not impacted:
-            return f"No downstream dependencies found for `{function_name}`."
-
-        lines = [f"## Impact Analysis: `{function_name}`", ""]
-        for i, entity in enumerate(impacted, 1):
-            lines.append(
-                f"{i}. [{entity.get('node_type', '?')}] "
-                f"`{entity.get('name', '?')}` "
-                f"in {entity.get('file_path', '?')}"
-            )
-
-        return "\n".join(lines)
-
-    except Exception as exc:
-        error_msg = (
-            f"[Guardian Error] Impact analysis failed: {exc}. "
-            "Ensure Memgraph is running and the codebase has been indexed."
-        )
-        logger.error("mcp_impact_error", error=str(exc))
-        return error_msg
-
 
 @mcp.tool()
-def index_codebase(
-    path: str,
-    language: str = "python",
-) -> str:
-    """Parse and index a codebase into the GraphRAG knowledge graph.
+def unequip_capability(domain: str) -> str:
+    """Unload a capability cluster to keep the context window lean.
 
-    Uses Tree-sitter to deterministically extract AST nodes (functions,
-    classes, variables) and edges (calls, imports, inheritance), then
-    ingests them into Memgraph (structural graph) and Qdrant (semantic
-    vectors).
+    Removes all tools registered by the given domain from the live
+    FastMCP server and fires notifications/tools/list_changed so the IDE
+    client automatically refreshes.
 
-    Use this tool to initialize or refresh the knowledge graph after
-    code changes.
+    Call this after completing a task to avoid overloading the LLM
+    context with unnecessary tools.
+
+    This is a BOOTSTRAP tool — always available.
 
     Args:
-        path: Absolute path to the codebase directory to parse and index.
-        language: Programming language to parse (currently: "python").
+        domain: The capability domain to unload (e.g., "pr_governance").
 
     Returns:
-        A summary of the indexing results including node, edge, and
-        vector counts.
+        Confirmation message listing the removed tool names.
     """
-    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
-    from dev_guardian.parsers.ast_parser import ASTParser
+    if domain not in get_active_capabilities():
+        return f"Capability '{domain}' is not currently active."
 
-    logger.info("mcp_index_codebase", path=path, language=language)
+    removed = _registered_tool_names.pop(domain, set())
 
-    try:
-        target = Path(path)
-        if not target.is_dir():
-            return (
-                f"[Guardian Error] Path does not exist or is not a directory: {path}"
-            )
+    for tool_name in removed:
+        try:
+            mcp._tool_manager.remove_tool(tool_name)
+        except Exception:
+            # Best-effort removal; not all FastMCP versions expose remove_tool
+            pass
 
-        parser = ASTParser(language=language)
-        results = parser.parse_directory(target)
+    mark_inactive(domain)
+    logger.info("jit_capability_unequipped", domain=domain, tools=sorted(removed))
 
-        retriever = HybridRetriever()
-        summary = retriever.ingest(results)
-
-        return (
-            f"Indexed {results.total_files} files — "
-            f"{summary['graph_nodes']} Memgraph Nodes, "
-            f"{summary['graph_edges']} Memgraph Edges, "
-            f"{summary['vectors_embedded']} Qdrant Vectors."
-        )
-
-    except Exception as exc:
-        error_msg = f"[Guardian Error] Indexing failed: {exc}"
-        logger.error("mcp_index_error", error=str(exc))
-        return error_msg
+    return (
+        f"🗑️  Capability '{domain}' unequipped. "
+        f"Removed tools: {sorted(removed)}. "
+        f"Context window cleaned up."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -304,22 +251,26 @@ def get_guardian_status() -> str:
     """Current operational status of the Agentic Dev Guardian system.
 
     Returns connectivity status for all backend services and the
-    current configuration state.
+    current configuration state, including which capability clusters
+    are currently active.
     """
     settings = get_settings()
+    active = sorted(get_active_capabilities())
     status = {
-        "version": "0.1.0",
+        "version": "0.2.0",
         "groq_configured": bool(settings.groq_api_key),
         "langfuse_configured": bool(settings.langfuse_public_key),
         "memgraph_endpoint": f"{settings.memgraph_host}:{settings.memgraph_port}",
         "qdrant_endpoint": f"{settings.qdrant_host}:{settings.qdrant_port}",
         "embedding_model": settings.embedding_model,
-        "capabilities": [
+        "bootstrap_tools": [
             "query_guardian_graph",
-            "evaluate_pr_diff",
-            "impact_analysis",
-            "index_codebase",
+            "list_capabilities",
+            "equip_capability",
+            "unequip_capability",
         ],
+        "active_capabilities": active,
+        "available_capability_domains": list(CLUSTER_REGISTRY.keys()),
     }
     return json.dumps(status, indent=2)
 
@@ -362,22 +313,23 @@ def get_security_policy() -> str:
 def review_pr(diff: str) -> str:
     """Generate a comprehensive PR review using the Guardian pipeline.
 
-    This prompt template instructs the IDE agent to:
-    1. Query the knowledge graph for context.
-    2. Evaluate the diff through the MoA pipeline.
-    3. Present results in a structured review format.
+    This prompt instructs the IDE agent to equip pr_governance tools,
+    query the knowledge graph for context, evaluate the diff through the
+    MoA pipeline, and present results in a structured review format.
     """
     return (
         "You are reviewing a Pull Request using the Agentic Dev Guardian system.\n\n"
         "## Instructions\n"
-        "1. First, call `query_guardian_graph` with a summary of the diff to "
-        "   understand the affected codebase area.\n"
-        "2. Then, call `evaluate_pr_diff` with the full diff content.\n"
-        "3. Present the results as a structured code review with:\n"
+        "1. Call `equip_capability('pr_governance')` to load the evaluation tools.\n"
+        "2. Call `query_guardian_graph` with a summary of the diff to understand "
+        "   the affected codebase area.\n"
+        "3. Call `evaluate_pr_diff` with the full diff content.\n"
+        "4. Present results as a structured code review:\n"
         "   - Decision (APPROVE / REMEDIATE)\n"
         "   - Architectural violations found\n"
         "   - Adversarial test cases generated\n"
-        "   - Suggested fixes (if any)\n\n"
+        "   - Suggested fixes (if any)\n"
+        "5. Call `unequip_capability('pr_governance')` when done.\n\n"
         f"## PR Diff\n```diff\n{diff}\n```"
     )
 
@@ -386,21 +338,23 @@ def review_pr(diff: str) -> str:
 def investigate_function(function_name: str) -> str:
     """Deep-dive investigation into a specific function's role and impact.
 
-    Instructs the IDE agent to perform impact analysis and retrieve
-    all contextual information about a function.
+    Instructs the IDE agent to equip codebase_intelligence tools, perform
+    impact analysis, and retrieve all contextual information about a function.
     """
     return (
         f"Investigate the function `{function_name}` in the codebase.\n\n"
         "## Instructions\n"
-        f"1. Call `impact_analysis` for `{function_name}` to find all "
+        "1. Call `equip_capability('codebase_intelligence')` to load analysis tools.\n"
+        f"2. Call `impact_analysis` for `{function_name}` to find all "
         "   downstream dependencies.\n"
-        f'2. Call `query_guardian_graph` with "{function_name}" to get '
+        f'3. Call `query_guardian_graph` with "{function_name}" to get '
         "   semantic context.\n"
-        "3. Summarize:\n"
+        "4. Summarize:\n"
         f"   - What `{function_name}` does\n"
         "   - What depends on it (blast radius)\n"
         "   - Risks of modifying it\n"
         "   - Suggested refactoring approach (if applicable)\n"
+        "5. Call `unequip_capability('codebase_intelligence')` when done.\n"
     )
 
 
@@ -415,6 +369,14 @@ def run_server() -> None:
     Called by the ``guardian serve`` CLI command.
     The server listens on stdin/stdout for MCP protocol messages
     from the connected IDE client.
+
+    On startup, only 4 bootstrap tools are exposed to keep the LLM
+    context window lean. Additional capability clusters are loaded
+    JIT via equip_capability().
     """
-    logger.info("mcp_server_starting")
+    logger.info(
+        "mcp_server_starting",
+        bootstrap_tools=4,
+        available_clusters=list(CLUSTER_REGISTRY.keys()),
+    )
     mcp.run(transport="stdio")

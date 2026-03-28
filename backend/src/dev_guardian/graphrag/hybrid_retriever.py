@@ -80,6 +80,62 @@ class HybridRetriever:
         logger.info("hybrid_ingest_complete", **summary)
         return summary
 
+    def jit_embed_nodes(self, names: list[str], user_clearance: int = 0) -> int:
+        """
+        Just-In-Time (Lazy) Embeddings.
+
+        Fetches specific nodes from Memgraph by name, embeds them via ONNX,
+        and pushes them to Qdrant. Used to populate vector contexts
+        at runtime for large codebases where `--skip-vectors` was used.
+
+        Args:
+            names: List of node names to locate in Memgraph.
+            user_clearance: ABAC clearance level.
+
+        Returns:
+            Number of points successfully embedded and upserted.
+        """
+        if not names:
+            return 0
+
+        from dev_guardian.parsers.models import ASTNode, NodeType
+
+        nodes_to_embed = []
+        for name in names:
+            results = self._memgraph.query_node_by_name(name, user_clearance)
+            for res in results:
+                try:
+                    node = ASTNode(
+                        name=res.get("name", "unknown"),
+                        node_type=NodeType(res.get("node_type", "function")),
+                        file_path=res.get("file_path", "unknown"),
+                        start_line=res.get("start_line", 1),
+                        end_line=res.get("end_line", 2),
+                        docstring=res.get("docstring"),
+                        owner_team=res.get("owner_team", "unassigned"),
+                        clearance_level=res.get("clearance_level", 0),
+                    )
+                    nodes_to_embed.append(node)
+                except ValueError:
+                    continue  # skip unknown types
+
+        if not nodes_to_embed:
+            return 0
+
+        logger.info("jit_embedding_start", count=len(nodes_to_embed))
+        self._qdrant.ensure_collection()
+        
+        # We temporarily load ONNX models here (controlled by fastembed internally)
+        count = self._qdrant.ingest_nodes(nodes_to_embed)
+        
+        # Free up memory immediately
+        import gc
+        del nodes_to_embed
+        gc.collect()
+        
+        logger.info("jit_embedding_complete", count=count)
+        return count
+
     def retrieve(
         self,
         query: str,

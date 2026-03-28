@@ -269,3 +269,101 @@ This log strictly tracks the phased execution of the Fusion Project.
 - Result: **No errors found**.
 - Additional audit artifact created: `.agents/logs/logic_correctness_audit_2026-03-22.md`.
 
+
+---
+
+### [2026-03-27 15:00:00+05:30] — Phase 5.1: Self-Healing Codebase Maintenance
+- **Agent**: Antigravity (langgraph_orchestrator + graphrag_engineer persona)
+- **Status**: SUCCESS ✅
+
+#### Files Created
+| File | Purpose |
+|------|---------|
+| `agents/refactor_patterns.py` | Pre-defined patterns (`MISSING_DOCSTRING`, `MISSING_TYPE_HINTS`, `FLASK_TO_FASTAPI`). `text_to_cypher_node()` — Groq NL→Cypher translation |
+| `agents/refactor_graph.py` | `build_refactor_graph()` — 3-node StateGraph: pattern_analyzer → impact_assessor → diff_generator |
+
+#### Files Modified
+| File | Change |
+|------|--------|
+| `cli.py` | Added `guardian refactor` (`--pattern`/`--query`) and `guardian query` (NL→Cypher) commands |
+
+#### Verification
+- `guardian refactor --pattern MISSING_DOCSTRING sktime-main` → ✅ 200+ matches, blueprint generated.
+- `guardian query --query "find all functions that call fit"` → ✅ Groq translated + Memgraph executed.
+
+---
+
+### [2026-03-27 15:30:00+05:30] — Phase 5.2: Automated Incident Response (SRE)
+- **Agent**: Antigravity (devops_sre + langgraph_orchestrator persona)
+- **Status**: SUCCESS ✅
+
+#### Files Created
+| File | Purpose |
+|------|---------|
+| `agents/incident_triager.py` | Regex stack trace parser. Extracts crashing function/module/line. Structured triage report |
+| `agents/sre_graph.py` | `build_sre_graph()` — 4-node LangGraph: parse_trace → graph_lookup → hotfix_agent → verify_hotfix |
+
+#### Files Modified
+| File | Change |
+|------|--------|
+| `cli.py` | Added `guardian incident --trace` / `--trace-file` command |
+
+#### Verification
+- `guardian incident --trace-file crash.log` → ✅ Parsed trace, Memgraph lookup, generated hotfix.
+
+---
+
+### [2026-03-27 16:00:00+05:30] — OOM Mitigation: Streaming Indexer + `--skip-vectors`
+- **Agent**: Antigravity (python_architect persona)
+- **Status**: SUCCESS ✅
+- **Trigger**: Terminal OOM kill on `guardian index sktime-main` (1,550 files)
+
+#### Files Modified
+| File | Change |
+|------|--------|
+| `cli.py` | Added `--skip-vectors`; deferred ONNX model load; `gc.collect()` after every file in streaming loop |
+
+#### Key Outcome
+- Peak RAM ∝ one file (not entire repo). ONNX model (~270MB) only loads if vectors requested.
+- `guardian index sktime-main --skip-vectors` → ✅ 10,038 nodes, 66,472 edges, no crash.
+
+---
+
+### [2026-03-27 22:30:00+05:30] — `guardian audit` Command (Proactive Security Scanning)
+- **Agent**: Antigravity (red_team_tester persona)
+- **Status**: SUCCESS ✅
+
+#### Files Modified
+| File | Change |
+|------|--------|
+| `cli.py` | Added `guardian audit <path> --top <n> --output <file>` command |
+
+#### Key Logic
+1. Memgraph query: top-N functions by `count(CALLS)` edges.
+2. Read source lines from disk, wrap as synthetic `+` diff.
+3. Run `gatekeeper_node()` + `redteam_node()` on each.
+4. Write severity report to `guardian_audit.md`.
+
+#### Verification
+- `guardian audit sktime-main --top 3` → ✅ 3 HIGH findings: `forward` (109 calls), `forward` (92 calls), `_fit` (63 calls).
+
+---
+
+### [2026-03-27 23:00:00+05:30] — Phase 5.7: Adaptive JIT Vector Embeddings
+- **Agent**: Antigravity (graphrag_engineer + python_architect persona)
+- **Status**: SUCCESS ✅
+
+#### Files Created
+| File | Purpose |
+|------|---------|
+| `graphrag/vector_manager.py` | `predict_embedding_strategy(repo_path, language)` → `"global"` (<300 files) or `"lazy"` (≥300). Threshold: `LAZY_EMBEDDING_THRESHOLD = 300` |
+
+#### Files Modified
+| File | Change |
+|------|--------|
+| `graphrag/hybrid_retriever.py` | Added `def jit_embed_nodes(names, user_clearance) -> int` — fetches from Memgraph, embeds via local ONNX, upserts to Qdrant, calls `gc.collect()` |
+| `cli.py` | `guardian index` auto-calls predictor; `guardian evaluate` parses `+def`/`+class` lines and calls `jit_embed_nodes`; `guardian audit` calls `jit_embed_nodes([fn_name])` per function |
+
+#### Verification
+- `predict_embedding_strategy(sktime-main)` → ✅ `"lazy"` (1,550 files ≥ 300)
+- `guardian evaluate test_eval.patch --repo sktime-main` → ✅ `jit_embedding_start count=2`, `semantic_hits=10`, `graph_entities=171`.

@@ -293,6 +293,33 @@ class MemgraphClient:
         )
         return [dict(r["impacted"]) for r in results]
 
+    def execute_query(self, cypher: str, params: dict | None = None) -> list[dict]:
+        """
+        Execute an arbitrary Cypher query and return all rows as dicts.
+
+        Used by Phase 5.1 migration pattern queries, which need to run
+        custom Cypher templates against the graph.
+
+        Args:
+            cypher: Cypher query string.
+            params: Optional parameter dict to pass to the query.
+
+        Returns:
+            List of row dicts with column names as keys.
+        """
+        rows = list(self._db.execute_and_fetch(cypher, params or {}))
+        # Flatten single-value rows (RETURN n.name AS name, etc.)
+        result = []
+        for row in rows:
+            result.append(
+                {
+                    k: (dict(v) if hasattr(v, "_asdict") else v)
+                    for k, v in row.items()
+                }
+            )
+        logger.info("execute_query_complete", rows=len(result))
+        return result
+
     def clear_graph(self) -> None:
         """Delete all nodes and edges. Use for testing only."""
         self._db.execute("MATCH (n) DETACH DELETE n")

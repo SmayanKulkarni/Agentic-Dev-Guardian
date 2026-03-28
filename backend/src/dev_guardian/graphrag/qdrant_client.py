@@ -135,6 +135,9 @@ class QdrantCodeClient:
         type, file path, and docstring. Payload includes all
         ABAC metadata for pre-filtered semantic search.
 
+        Batched internally in chunks of 500 to prevent OOM errors
+        on very large repositories (like sktime).
+
         Args:
             nodes: List of ASTNode objects from the parser.
 
@@ -144,39 +147,53 @@ class QdrantCodeClient:
         if not nodes:
             return 0
 
-        texts = [self._build_embedding_text(n) for n in nodes]
-        embeddings = list(self._embedder.embed(texts))
+        import gc
 
-        points = []
-        for node, vector in zip(nodes, embeddings):
-            point_id = self._stable_point_id(node)
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=vector.tolist(),
-                    payload={
-                        "name": node.name,
-                        "node_type": node.node_type.value,
-                        "file_path": node.file_path,
-                        "start_line": node.start_line,
-                        "end_line": node.end_line,
-                        "docstring": node.docstring or "",
-                        "owner_team": node.owner_team,
-                        "clearance_level": node.clearance_level,
-                    },
+        batch_size = 32  # Small batches to limit ONNX intermediate tensor RAM
+        total_upserted = 0
+
+        for i in range(0, len(nodes), batch_size):
+            batch = nodes[i:i + batch_size]
+            texts = [self._build_embedding_text(n) for n in batch]
+
+            # Embed batch — ONNX allocates large intermediate tensors
+            embeddings = list(self._embedder.embed(texts))
+
+            points = []
+            for node, vector in zip(batch, embeddings):
+                point_id = self._stable_point_id(node)
+                points.append(
+                    PointStruct(
+                        id=point_id,
+                        vector=vector.tolist(),
+                        payload={
+                            "name": node.name,
+                            "node_type": node.node_type.value,
+                            "file_path": node.file_path,
+                            "start_line": node.start_line,
+                            "end_line": node.end_line,
+                            "docstring": node.docstring or "",
+                            "owner_team": node.owner_team,
+                            "clearance_level": node.clearance_level,
+                        },
+                    )
                 )
-            )
 
-        self._client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points,
-        )
+            self._client.upsert(
+                collection_name=COLLECTION_NAME,
+                points=points,
+            )
+            total_upserted += len(points)
+
+            # Eagerly free ONNX intermediate buffers
+            del embeddings, points, texts
+            gc.collect()
 
         logger.info(
             "qdrant_nodes_ingested",
-            count=len(points),
+            count=total_upserted,
         )
-        return len(points)
+        return total_upserted
 
     def semantic_search(
         self,
