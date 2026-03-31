@@ -698,6 +698,79 @@ def serve() -> None:
     run_server()
 
 
+@app.command()
+def docs(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the indexed repository root.",
+            exists=True,
+            file_okay=False,
+            resolve_path=True,
+        ),
+    ],
+    top: Annotated[
+        int,
+        typer.Option(
+            "--top",
+            "-n",
+            help="Number of highest-complexity functions to generate ADRs for.",
+        ),
+    ] = 5,
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output file for the generated wiki (default: GUARDIAN_WIKI.md).",
+        ),
+    ] = Path("GUARDIAN_WIKI.md"),
+    clearance: Annotated[
+        int,
+        typer.Option("--clearance", "-c", help="ABAC clearance level."),
+    ] = 0,
+) -> None:
+    """Generate a live architecture wiki from the indexed Memgraph graph.
+
+    Phase 5.3: Auto-Generating Dynamic Documentation.
+
+    Queries the already-indexed Memgraph AST graph (no re-parsing needed)
+    to produce a comprehensive markdown wiki containing:
+      - Module dependency flowchart (Mermaid)
+      - Class inheritance hierarchy (Mermaid)
+      - Top-N function call graphs (Mermaid)
+      - AI-narrated Architectural Decision Records (ADRs via Groq)
+
+    All diagrams are derived from IMPORTS / CALLS / INHERITS_FROM edges.
+    ADR narration uses Groq to provide architectural context per function.
+    """
+    from groq import Groq
+
+    from dev_guardian.core.config import get_settings
+    from dev_guardian.docs.wiki_builder import build_wiki, save_wiki
+    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+
+    logger.info("docs_start", path=str(path), top=top)
+    typer.echo(f"[bold green]📖 Guardian Docs:[/bold green] {path}")
+    typer.echo(f"[cyan]Generating wiki for top {top} highest-complexity functions...[/cyan]")
+
+    settings = get_settings()
+    mg = MemgraphClient()
+    groq_client = Groq(api_key=settings.groq_api_key)
+
+    typer.echo("[cyan]📡 Querying Memgraph for module graph...[/cyan]")
+    wiki_content = build_wiki(
+        repo_path=path,
+        mg=mg,
+        groq_client=groq_client,
+        top_n=top,
+        user_clearance=clearance,
+    )
+
+    wiki_path = save_wiki(wiki_content, output)
+    typer.echo(f"\n[bold green]✅ Wiki written to:[/bold green] {wiki_path}")
+    logger.info("docs_complete", output=str(wiki_path))
+
+
 if __name__ == "__main__":
     app()
-
