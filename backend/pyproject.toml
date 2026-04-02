@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-dev-guardian"
 version = "0.1.0"
-description = "AI Developer Governance & Codebase Evaluator — A GraphRAG-powered multi-agent system that autonomously evaluates, tests, and governs AI-generated code against proprietary codebases."
+description = "AI Developer Governance & Codebase Evaluator — A GraphRAG-powered multi-agent system featuring autonomous code evaluation, red-team testing, and dynamic LLM-narrated architectural documentation."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
