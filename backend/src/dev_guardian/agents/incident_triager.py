@@ -15,10 +15,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from langfuse import observe
-
 from dev_guardian.agents.state import IncidentState
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
 logger = get_logger(__name__)
@@ -47,7 +46,7 @@ def _parse_stack_trace(trace: str) -> dict:
     frames = _FRAME_RE.findall(trace)
     # frames is list of (file, line, func) tuples
     structured = [
-        {"file": f, "line": int(l), "function": fn} for f, l, fn in frames
+        {"file": f, "line": int(line), "function": fn} for f, line, fn in frames
     ]
 
     # The last user-code frame is typically the one that raised the exception

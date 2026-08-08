@@ -12,10 +12,9 @@ This is the "Data Minimization Edge" defined in the Security Guardrails.
 """
 
 from pathlib import Path
-from typing import Optional
 
 import tree_sitter_python as tspython
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Language, Node, Parser
 
 from dev_guardian.core.logging import get_logger
 from dev_guardian.parsers.models import (
@@ -70,7 +69,7 @@ class ASTParser:
         """
         try:
             source_code = file_path.read_bytes()
-        except (OSError, IOError) as e:
+        except OSError as e:
             logger.error("file_read_error", path=str(file_path), error=str(e))
             return ParseResult()
 
@@ -137,7 +136,7 @@ class ASTParser:
         file_path: str,
         nodes: list[ASTNode],
         edges: list[ASTEdge],
-        parent_name: Optional[str] = None,
+        parent_name: str | None = None,
     ) -> None:
         """
         Recursively traverse the AST tree and extract Nodes/Edges.
@@ -210,14 +209,14 @@ class ASTParser:
         for child in node.children:
             self._extract_nodes(child, file_path, nodes, edges, parent_name)
 
-    def _get_identifier(self, node: Node) -> Optional[str]:
+    def _get_identifier(self, node: Node) -> str | None:
         """Extract the name identifier from a function/class definition node."""
         for child in node.children:
             if child.type == "identifier":
                 return child.text.decode("utf-8") if child.text else None
         return None
 
-    def _get_docstring(self, node: Node) -> Optional[str]:
+    def _get_docstring(self, node: Node) -> str | None:
         """Extract the docstring from a function/class body if present."""
         body = None
         for child in node.children:
@@ -296,7 +295,7 @@ class ASTParser:
         node: Node,
         file_path: str,
         edges: list[ASTEdge],
-        parent_name: Optional[str] = None,
+        parent_name: str | None = None,
     ) -> None:
         """Extract IMPORTS edges from import statements."""
         source = parent_name or "__module__"

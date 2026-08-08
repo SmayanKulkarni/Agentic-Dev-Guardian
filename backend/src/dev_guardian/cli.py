@@ -2,22 +2,23 @@
 Typer CLI Interface for Agentic Dev Guardian.
 
 Architecture Blueprint Reference: Phase 1 — Core Python Package & AST Parsers.
-This module exposes the primary `guardian` CLI commands:
-    - `guardian index <path>`: Parse a codebase and ingest AST into GraphRAG.
-    - `guardian evaluate <path>`: Evaluate a PR diff using GraphRAG + MoA agents.
-  - `guardian version`: Print the current package version.
+This module exposes the primary `dev-guardian` CLI commands:
+    - `dev-guardian init`: Start and health-check Memgraph + Qdrant.
+    - `dev-guardian index <path>`: Parse a codebase and ingest AST into GraphRAG.
+    - `dev-guardian evaluate <path>`: Evaluate a PR diff using GraphRAG + MoA agents.
+    - `dev-guardian version`: Print the current package version.
 """
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
-from typing_extensions import Annotated
 
 from dev_guardian import __version__
 from dev_guardian.core.logging import get_logger
 
 app = typer.Typer(
-    name="guardian",
+    name="dev-guardian",
     help="AI Developer Governance & Codebase Evaluator — "
     "Autonomously evaluate AI-generated code against proprietary codebases.",
     add_completion=False,
@@ -25,6 +26,122 @@ app = typer.Typer(
 )
 
 logger = get_logger(__name__)
+
+
+def _require_infra() -> None:
+    """Fail fast with a user-facing message when Memgraph/Qdrant are down.
+
+    Commands verify; only `dev-guardian init` starts anything (ticket 05).
+    """
+    from dev_guardian.core.infra import InfraError, require_ready
+
+    try:
+        require_ready()
+    except InfraError as exc:
+        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _mcp_config_json() -> str:
+    """The MCP client block for this install, with the resolved settings.
+
+    Guardian writes no config of its own (ticket 06) — the IDE's `env` block
+    is the configuration channel, so `init` just prints what to paste.
+    """
+    import json
+    import os
+
+    from dev_guardian.core.config import get_settings
+
+    s = get_settings()
+    env = {
+        "GUARDIAN_PROVIDER": os.environ.get("GUARDIAN_PROVIDER", "groq"),
+        # Never echo the resolved key: this output gets pasted into chats,
+        # issues and screen shares. The user fills it in at paste time.
+        "GUARDIAN_GROQ_API_KEY": "<your-api-key>",
+        "GUARDIAN_MEMGRAPH_HOST": s.memgraph_host,
+        "GUARDIAN_MEMGRAPH_PORT": str(s.memgraph_port),
+        "GUARDIAN_QDRANT_HOST": s.qdrant_host,
+        "GUARDIAN_QDRANT_PORT": str(s.qdrant_port),
+    }
+    model = os.environ.get("GUARDIAN_MODEL")
+    if model:
+        env["GUARDIAN_MODEL"] = model
+    block = {
+        "mcpServers": {
+            "guardian": {
+                "command": "uvx",
+                "args": [
+                    "--from",
+                    "agentic-dev-guardian",
+                    "dev-guardian",
+                    "serve",
+                ],
+                "env": env,
+            }
+        }
+    }
+    return json.dumps(block, indent=2)
+
+
+@app.command()
+def init(
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Seconds to wait for services to become ready."),
+    ] = 90.0,
+    print_mcp_config: Annotated[
+        bool,
+        typer.Option(
+            "--print-mcp-config",
+            help="Print the JSON block to paste into your MCP client and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Start and verify Guardian's backing services (Memgraph + Qdrant).
+
+    Reuses anything already listening on the configured ports and starts
+    Docker containers only for what is missing. Safe to re-run.
+    """
+    from dev_guardian.core.infra import InfraError, bootstrap
+
+    if print_mcp_config:
+        typer.echo(_mcp_config_json())
+        return
+
+    try:
+        statuses = bootstrap(timeout=timeout)
+    except InfraError as exc:
+        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    for s in statuses:
+        mark = "✅" if s.ready else "❌"
+        typer.echo(f"{mark} {s.name}: {s.host}:{s.port}")
+    typer.echo(
+        "[bold green]Guardian is ready.[/bold green] "
+        "Next: dev-guardian index <path>, then dev-guardian init --print-mcp-config"
+    )
+
+
+@app.command()
+def down() -> None:
+    """Stop the Memgraph/Qdrant containers that `dev-guardian init` started.
+
+    Services Guardian did not start are left running.
+    """
+    from dev_guardian.core.infra import InfraError, teardown
+
+    try:
+        stopped = teardown()
+    except InfraError as exc:
+        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if stopped:
+        typer.echo(f"[bold green]Stopped:[/bold green] {', '.join(stopped)}")
+    else:
+        typer.echo("Nothing to stop — no Guardian-started containers running.")
 
 
 @app.command()
@@ -61,10 +178,12 @@ def index(
     Use --skip-vectors on memory-constrained systems to avoid loading
     the ~270MB ONNX embedding model entirely.
     """
+    _require_infra()
+
     import gc
 
-    from dev_guardian.parsers.ast_parser import ASTParser
     from dev_guardian.graphrag.vector_manager import predict_embedding_strategy
+    from dev_guardian.parsers.ast_parser import ASTParser
 
     logger.info("index_start", path=str(path), language=language)
     typer.echo(f"[bold green]🔍 Indexing codebase:[/bold green] {path}")
@@ -112,7 +231,7 @@ def index(
     total_vectors = 0
     file_count = 0
 
-    for i, file_path in enumerate(all_files):
+    for file_path in all_files:
         result = parser.parse_file(file_path)
         if result.total_files == 0:
             continue
@@ -186,11 +305,13 @@ def evaluate(
         typer.Option(
             "--clearance",
             "-c",
-            help="ABAC clearance level (0=public, higher=restricted).",
+            help="Graph retrieval scope (higher pulls back more). Not a security boundary.",
         ),
     ] = 0,
 ) -> None:
     """Evaluate a PR diff with GraphRAG context and the MoA decision pipeline."""
+    _require_infra()
+
     from dev_guardian.agents.graph import build_guardian_graph
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
 
@@ -288,7 +409,7 @@ def audit(
         typer.Option(
             "--clearance",
             "-c",
-            help="ABAC clearance level (0=public).",
+            help="Graph retrieval scope (higher pulls back more).",
         ),
     ] = 0,
     output: Annotated[
@@ -310,6 +431,8 @@ def audit(
         guardian audit /path/to/sktime-main
         guardian audit /path/to/sktime-main --top 10
     """
+    _require_infra()
+
     from dev_guardian.agents.gatekeeper import gatekeeper_node
     from dev_guardian.agents.red_team import redteam_node
     from dev_guardian.agents.state import GuardianState
@@ -366,7 +489,7 @@ def audit(
             src_lines = Path(fp).read_text(encoding="utf-8", errors="replace").splitlines()
             fn_lines = src_lines[max(0, start_line - 1): end_line]
             fn_source = "\n".join(fn_lines)
-        except (OSError, IOError) as e:
+        except OSError as e:
             typer.echo(f"    [yellow]⚠ Could not read {fp}: {e}[/yellow]")
             continue
 
@@ -515,6 +638,8 @@ def incident(
         guardian incident --trace "Traceback..." --triage-only
     """
     # ── Resolve stack trace input ───────────────────────────────
+    _require_infra()
+
     if trace_file is not None and Path(trace_file).exists():
         stack_trace = Path(trace_file).read_text(encoding="utf-8")
     elif trace:
@@ -536,7 +661,7 @@ def incident(
             {"stack_trace": stack_trace, "repo_path": str(path), "user_clearance": 0, "messages": []}
         )
         ctx = result.get("incident_context", {})
-        typer.echo(f"\n[bold]Triage Result:[/bold]")
+        typer.echo("\n[bold]Triage Result:[/bold]")
         typer.echo(f"  Failing function : {ctx.get('failing_function', '?')}")
         typer.echo(f"  File             : {ctx.get('failing_file', '?')}")
         typer.echo(f"  Exception        : {ctx.get('exception_type', '?')}: {ctx.get('exception_msg', '')}")
@@ -631,6 +756,8 @@ def refactor(
         )
         return
 
+    _require_infra()
+
     from dev_guardian.agents.refactor_graph import build_refactor_graph
 
     typer.echo(f"[bold green]🔧 Running Self-Healing Refactor:[/bold green] {pattern}")
@@ -678,24 +805,56 @@ def refactor(
 
 
 @app.command()
-def serve() -> None:
-    """Start the MCP server for IDE integration (stdio transport).
+def serve(
+    transport: Annotated[
+        str,
+        typer.Option(
+            "--transport",
+            help="'stdio' for an IDE-spawned subprocess, or 'streamable-http' "
+            "to listen on a socket for one or more connecting clients.",
+        ),
+    ] = "stdio",
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Bind address for --transport streamable-http."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Bind port for --transport streamable-http."),
+    ] = 8000,
+) -> None:
+    """Start the MCP server for IDE integration.
 
-    Launches the Model Context Protocol server that exposes
-    Guardian tools (query_guardian_graph, evaluate_pr_diff,
-    impact_analysis, index_codebase) to any MCP-compatible IDE
-    such as Cursor, Claude Desktop, or Windsurf.
+    Launches the Model Context Protocol server that exposes Guardian's
+    bootstrap tools (query_guardian_graph, list_capabilities,
+    equip_capability, unequip_capability) to any MCP-compatible IDE such
+    as Cursor, Claude Desktop, or Windsurf. Everything else loads JIT.
 
-    The server communicates over stdin/stdout using the MCP protocol.
-    Configure your IDE's MCP settings to point to this command.
+    Under the default stdio transport the server talks over stdin/stdout
+    and your IDE spawns it — run `dev-guardian init --print-mcp-config`
+    for the JSON block to paste.
+
+    `--transport streamable-http` serves the same tools over HTTP instead,
+    for running one Guardian on the machine that holds the indexed
+    codebase. It has no authentication of its own, so it binds to
+    127.0.0.1 unless you put it behind a proxy that authenticates.
     """
+    valid = {"stdio", "streamable-http", "sse"}
+    if transport not in valid:
+        typer.echo(
+            f"[bold red]Unknown transport '{transport}'. "
+            f"Expected one of: {', '.join(sorted(valid))}.[/bold red]",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    _require_infra()
+
     from dev_guardian.mcp_server import run_server
 
-    typer.echo(
-        "[bold cyan]🚀 Starting MCP Server (stdio transport)...[/bold cyan]",
-        err=True,
-    )
-    run_server()
+    where = "stdio" if transport == "stdio" else f"{transport} on {host}:{port}"
+    typer.echo(f"[bold cyan]🚀 Starting MCP Server ({where})...[/bold cyan]", err=True)
+    run_server(transport=transport, host=host, port=port)
 
 
 @app.command()
@@ -727,7 +886,7 @@ def docs(
     ] = Path("GUARDIAN_WIKI.md"),
     clearance: Annotated[
         int,
-        typer.Option("--clearance", "-c", help="ABAC clearance level."),
+        typer.Option("--clearance", "-c", help="Graph retrieval scope."),
     ] = 0,
 ) -> None:
     """Generate a live architecture wiki from the indexed Memgraph graph.
@@ -739,14 +898,13 @@ def docs(
       - Module dependency flowchart (Mermaid)
       - Class inheritance hierarchy (Mermaid)
       - Top-N function call graphs (Mermaid)
-      - AI-narrated Architectural Decision Records (ADRs via Groq)
+      - AI-narrated Architectural Decision Records (ADRs)
 
     All diagrams are derived from IMPORTS / CALLS / INHERITS_FROM edges.
-    ADR narration uses Groq to provide architectural context per function.
+    ADR narration uses the configured LLM provider (GUARDIAN_PROVIDER).
     """
-    from groq import Groq
+    _require_infra()
 
-    from dev_guardian.core.config import get_settings
     from dev_guardian.docs.wiki_builder import build_wiki, save_wiki
     from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
@@ -754,15 +912,12 @@ def docs(
     typer.echo(f"[bold green]📖 Guardian Docs:[/bold green] {path}")
     typer.echo(f"[cyan]Generating wiki for top {top} highest-complexity functions...[/cyan]")
 
-    settings = get_settings()
     mg = MemgraphClient()
-    groq_client = Groq(api_key=settings.groq_api_key)
 
     typer.echo("[cyan]📡 Querying Memgraph for module graph...[/cyan]")
     wiki_content = build_wiki(
         repo_path=path,
         mg=mg,
-        groq_client=groq_client,
         top_n=top,
         user_clearance=clearance,
     )

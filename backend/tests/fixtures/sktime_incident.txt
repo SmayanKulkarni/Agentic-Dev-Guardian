@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/smayan/Downloads/sktime-main/sktime/forecasting/base/_base.py", line 312, in predict
+    y_pred = self._predict(fh=fh, X=X)
+  File "/home/smayan/Downloads/sktime-main/sktime/forecasting/trend/_trend.py", line 188, in _predict
+    y_pred = self._predict_interval(fh=fh, X=X, coverage=coverage)
+  File "/home/smayan/Downloads/sktime-main/sktime/utils/validation/forecasting.py", line 89, in check_fh
+    raise ValueError(f"ForecastingHorizon must not be empty, but found: {fh}")
+ValueError: ForecastingHorizon must not be empty, but found: []

@@ -58,7 +58,7 @@ def _analyze_blast_radius(
         JSON with the impacted entity count and entity list.
     """
     from dev_guardian.agents.refactor_patterns import get_pattern
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.graphrag.clients import get_memgraph, reset_clients
 
     logger.info("mcp_analyze_blast_radius", pattern=pattern, repo_path=repo_path)
 
@@ -68,12 +68,12 @@ def _analyze_blast_radius(
         return json.dumps({"error": f"Unknown pattern '{pattern}'. Available: {available}"})
 
     try:
-        client = MemgraphClient()
         params: dict = {"repo_path": repo_path}
         if function_name:
             params["function_name"] = function_name
-        rows = client.execute_query(pattern_def["cypher"].strip(), params)
+        rows = get_memgraph().execute_query(pattern_def["cypher"].strip(), params)
     except Exception as exc:
+        reset_clients()
         return json.dumps({"error": f"Graph query failed: {exc}"})
 
     return json.dumps(

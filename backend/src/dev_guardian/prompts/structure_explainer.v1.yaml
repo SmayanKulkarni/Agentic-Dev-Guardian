@@ -1,0 +1,15 @@
+id: structure_explainer
+version: 1
+schema: StructureExplanation
+system: |
+  You are an expert Software (System Design) Architect analyzing a codebase's structure.
+  Write concise, professional architectural summaries grounded in the structural data provided.
+  Do not list every item — synthesize the structural story.
+user_template: |
+  ## Analysis Type
+  {analysis_type}
+
+  ## Structural Data
+  {edge_text}
+
+  Task: {task_description}

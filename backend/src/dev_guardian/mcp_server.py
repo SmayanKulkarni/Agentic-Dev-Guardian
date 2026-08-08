@@ -14,10 +14,11 @@ codebases in real-time.
 To keep the IDE LLM's context window lean, tools are loaded on-demand
 via the "Bootstrap → Equip → Work → Unequip" lifecycle:
 
-  1. Server starts with only 3 bootstrap tools:
+  1. Server starts with only 4 bootstrap tools:
        - query_guardian_graph
        - list_capabilities
-       - equip_capability / unequip_capability
+       - equip_capability
+       - unequip_capability
   2. IDE agent calls equip_capability("pr_governance") to load additional tools.
   3. FastMCP emits `notifications/tools/list_changed` so the IDE refreshes.
   4. Agent uses the new tools and calls unequip_capability when done.
@@ -34,21 +35,20 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from dev_guardian.core.config import get_settings
-from dev_guardian.core.logging import get_logger
+import dev_guardian.capability_clusters.codebase_intelligence  # noqa: F401
+import dev_guardian.capability_clusters.incident_response  # noqa: F401
 
 # ── Bootstrap all cluster modules so they populate CLUSTER_REGISTRY ─
 import dev_guardian.capability_clusters.pr_governance  # noqa: F401
-import dev_guardian.capability_clusters.codebase_intelligence  # noqa: F401
 import dev_guardian.capability_clusters.self_healing  # noqa: F401
-import dev_guardian.capability_clusters.incident_response  # noqa: F401
-
 from dev_guardian.capability_clusters.core import (
     CLUSTER_REGISTRY,
     get_active_capabilities,
     mark_active,
     mark_inactive,
 )
+from dev_guardian.core.config import get_settings
+from dev_guardian.core.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -94,19 +94,19 @@ def query_guardian_graph(
         A structured text block containing semantic search hits and
         structural graph context, ready for LLM reasoning.
     """
-    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+    from dev_guardian.graphrag.clients import get_retriever, reset_clients
 
     logger.info("mcp_query_graph", query=query, clearance=clearance, top_k=top_k)
 
     try:
-        retriever = HybridRetriever()
-        result = retriever.retrieve(
+        result = get_retriever().retrieve(
             query=query,
             user_clearance=clearance,
             top_k=top_k,
         )
         return result.get("merged_context", "No results found.")
     except Exception as exc:
+        reset_clients()
         logger.error("mcp_query_graph_error", error=str(exc))
         return (
             f"[Guardian Error] GraphRAG query failed: {exc}. "
@@ -363,20 +363,45 @@ def investigate_function(function_name: str) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 
-def run_server() -> None:
-    """Start the MCP server using stdio transport.
+def run_server(
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    """Start the MCP server.
 
-    Called by the ``guardian serve`` CLI command.
-    The server listens on stdin/stdout for MCP protocol messages
-    from the connected IDE client.
+    Called by the ``dev-guardian serve`` CLI command.
 
     On startup, only 4 bootstrap tools are exposed to keep the LLM
     context window lean. Additional capability clusters are loaded
     JIT via equip_capability().
+
+    Args:
+        transport: ``stdio`` (default) for an IDE-spawned subprocess, or
+            ``streamable-http`` to listen on a socket so several clients —
+            or a remote one — can connect to one running Guardian.
+        host: Bind address for the HTTP transports. Defaults to loopback:
+            the server has no authentication of its own and exposes tools
+            that read the indexed codebase, so binding it to a public
+            interface must be a deliberate act behind a proxy that
+            authenticates.
+        port: Bind port for the HTTP transports.
+
+    Note:
+        Equipped capabilities are process-global, not per-connection. Under
+        an HTTP transport shared by several clients, one client's
+        ``equip_capability`` is visible to all of them. That is harmless for
+        a single-user self-hosted server (the intended shape) but is the
+        reason this is not a multi-tenant service.
     """
+    if transport != "stdio":
+        mcp.settings.host = host
+        mcp.settings.port = port
+
     logger.info(
         "mcp_server_starting",
+        transport=transport,
         bootstrap_tools=4,
         available_clusters=list(CLUSTER_REGISTRY.keys()),
     )
-    mcp.run(transport="stdio")
+    mcp.run(transport=transport)  # type: ignore[arg-type]

@@ -48,7 +48,7 @@ def _evaluate_pr_diff(
         agent messages, and any remediation diff if applicable.
     """
     from dev_guardian.agents.graph import build_guardian_graph
-    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+    from dev_guardian.graphrag.clients import get_retriever, reset_clients
 
     logger.info(
         "mcp_evaluate_diff",
@@ -57,8 +57,7 @@ def _evaluate_pr_diff(
     )
 
     try:
-        retriever = HybridRetriever()
-        rag_result = retriever.retrieve(
+        rag_result = get_retriever().retrieve(
             query=diff_content[:500],
             user_clearance=clearance,
             top_k=10,
@@ -88,6 +87,7 @@ def _evaluate_pr_diff(
         return json.dumps(output, indent=2)
 
     except Exception as exc:
+        reset_clients()
         logger.error("mcp_evaluate_error", error=str(exc))
         return json.dumps({"error": f"[Guardian Error] PR evaluation failed: {exc}"})
 

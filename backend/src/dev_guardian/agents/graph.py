@@ -38,35 +38,16 @@ Graph Topology:
                    END           END
 """
 
-from groq import Groq
-from langfuse import observe
 from langgraph.graph import END, StateGraph
 
 from dev_guardian.agents.gatekeeper import gatekeeper_node
 from dev_guardian.agents.red_team import redteam_node
 from dev_guardian.agents.remediation import remediation_node
 from dev_guardian.agents.state import GuardianState
-from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 
 logger = get_logger(__name__)
-
-DEBATE_SYSTEM_PROMPT = """\
-You are the Debate Mediator for a codebase governance system.
-Two specialist agents disagree on a Pull Request:
-
-- The Gatekeeper says: {gk_verdict} — {gk_reasoning}
-- The Red Team says: {rt_verdict} — {rt_reasoning}
-
-Using the GraphRAG codebase context below, determine which agent
-is correct. Resolve the contradiction with mathematical precision.
-
-GraphRAG Context:
-{context}
-
-Output exactly one line:
-RESOLUTION: [APPROVE|REJECT|REMEDIATE] — [One sentence explanation]
-"""
 
 
 @observe(name="supervisor_node")
@@ -114,46 +95,30 @@ def debate_node(state: GuardianState) -> dict:
     """
     Debate: resolve contradictions between Gatekeeper and Red Team.
 
-    Uses Groq LLM to mathematically mediate the disagreement
-    using GraphRAG context as ground truth evidence.
+    Migrated to use SkillRouter (Phase 1 harness).
+    Uses GraphRAG context as ground truth evidence.
     """
-    settings = get_settings()
-    client = Groq(api_key=settings.groq_api_key)
-
     gk = state.get("gatekeeper_report", {})
     rt = state.get("redteam_report", {})
     context = state.get("graphrag_context", "")
 
-    prompt = DEBATE_SYSTEM_PROMPT.format(
-        gk_verdict=gk.get("verdict", "?"),
-        gk_reasoning=gk.get("reasoning", "N/A"),
-        rt_verdict=rt.get("verdict", "?"),
-        rt_reasoning=rt.get("reasoning", "N/A"),
-        context=context,
+    from dev_guardian.harness.skill_router import run_skill
+    result = run_skill(
+        "debate_mediator",
+        {
+            "gk_verdict": gk.get("verdict", "?"),
+            "gk_reasoning": gk.get("reasoning", "N/A"),
+            "rt_verdict": rt.get("verdict", "?"),
+            "rt_reasoning": rt.get("reasoning", "N/A"),
+            "context": context,
+        },
     )
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": prompt},
-        ],
-        temperature=0.0,
-        max_tokens=256,
-    )
-
-    raw = response.choices[0].message.content or ""
-    resolution = raw.strip()
-
-    # Parse the resolution into a decision
-    decision = "remediate"  # default to safe option
-    upper = resolution.upper()
-    if "APPROVE" in upper:
-        decision = "approve"
-    elif "REJECT" in upper or "REMEDIATE" in upper:
-        decision = "remediate"
+    from dev_guardian.harness.schema import DebateResolution
+    parsed: DebateResolution = result.parsed  # type: ignore[assignment]
+    decision = parsed.decision
+    resolution = parsed.explanation
 
     logger.info("debate_resolved", decision=decision)
-
     return {
         "debate_resolution": resolution,
         "decision": decision,

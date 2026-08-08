@@ -20,70 +20,12 @@ regardless of whether the user typed a pattern key or free-form English.
 
 from __future__ import annotations
 
-from groq import Groq
-from langfuse import observe
-
 from dev_guardian.agents.refactor_patterns import MIGRATION_PATTERNS, get_pattern
 from dev_guardian.agents.state import RefactorState
-from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 
 logger = get_logger(__name__)
-
-# ── Guardian AST Schema injected into every Text-to-Cypher prompt ───
-# This gives Groq the exact vocabulary of our Memgraph graph so it
-# cannot hallucinate property names or node labels.
-GUARDIAN_AST_SCHEMA = """\
-## Guardian Memgraph AST Schema
-
-### Node Label
-All AST entities are stored as: (:ASTNode)
-
-### Node Properties
-| Property       | Type    | Description                                             |
-|----------------|---------|---------------------------------------------------------|
-| name           | string  | Identifier name (function, class, variable name)        |
-| file_path      | string  | Absolute path of the source file                        |
-| node_type      | string  | 'function' | 'class' | 'variable' | 'import'           |
-| decorators     | string  | Comma-separated decorator names (e.g. "validator,route")|
-| bases          | string  | Comma-separated base class names (e.g. "BaseModel")     |
-| docstring      | string  | Raw docstring text, or empty string if absent           |
-| return_type    | string  | Annotated return type, or empty string if unannotated   |
-| scope          | string  | 'module' | 'class' | 'function'                         |
-| is_mutable     | boolean | True for mutable module-level variables                 |
-| clearance_level| integer | ABAC clearance (0 = public)                             |
-
-### Relationship Types
-| Relationship    | Meaning                                          |
-|-----------------|--------------------------------------------------|
-| [:CALLS]        | source function calls target function            |
-| [:IMPORTS]      | source module imports a name from target module  |
-| [:INHERITS_FROM]| source class inherits from target class          |
-| [:CONTAINS]     | source class or module contains target entity    |
-
-### Query Rules (MANDATORY)
-1. ALWAYS return exactly these 4 columns:
-   RETURN n.name AS name, n.file_path AS file_path,
-          n.node_type AS node_type, '<reason_slug>' AS reason
-2. Use MATCH ... WHERE patterns, not shorthand property filters in MATCH.
-3. Never use OPTIONAL MATCH — we want definitive hits only.
-4. Do NOT include LIMIT — the planner will handle result set size.
-5. Output ONLY the raw Cypher query. No explanation, no markdown fences.
-"""
-
-TRANSLATOR_SYSTEM_PROMPT = f"""\
-You are the Pattern Translator for the Guardian codebase governance system.
-Your job is to convert a natural language refactoring intent into a precise
-Memgraph Cypher query that targets the Guardian AST graph.
-
-{GUARDIAN_AST_SCHEMA}
-
-## Instructions
-1. Analyse the user's intent carefully.
-2. Write a Cypher query that finds ALL AST nodes relevant to that intent.
-3. Follow all Query Rules above exactly.
-4. Return ONLY the raw Cypher — no prose, no code fences.
-"""
 
 
 @observe(name="pattern_translator_agent")
@@ -142,26 +84,11 @@ def pattern_translator_node(state: RefactorState) -> dict:
 
     logger.info("pattern_translator_llm", pattern=pattern)
 
-    settings = get_settings()
-    client = Groq(api_key=settings.groq_api_key)
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": TRANSLATOR_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f'Natural language refactoring intent: "{pattern}"\n\n'
-                    "Generate the Cypher query to find all relevant AST nodes."
-                ),
-            },
-        ],
-        temperature=0.0,   # deterministic output is critical
-        max_tokens=512,
-    )
-
-    raw_cypher = (response.choices[0].message.content or "").strip()
+    from dev_guardian.harness.skill_router import run_skill
+    result = run_skill("pattern_translator", {"pattern": pattern})
+    from dev_guardian.harness.schema import PatternCypher
+    parsed: PatternCypher = result.parsed  # type: ignore[assignment]
+    raw_cypher = parsed.cypher.strip()
 
     # Strip any accidental markdown fences the LLM might add
     raw_cypher = _strip_fences(raw_cypher)

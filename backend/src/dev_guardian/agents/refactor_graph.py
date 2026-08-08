@@ -17,7 +17,6 @@ Graph topology:
 
 from __future__ import annotations
 
-from langfuse import observe
 from langgraph.graph import END, StateGraph
 
 from dev_guardian.agents.blueprint_validator import blueprint_validator_node
@@ -26,6 +25,7 @@ from dev_guardian.agents.pattern_translator import pattern_translator_node
 from dev_guardian.agents.refactor_planner import refactor_planner_node
 from dev_guardian.agents.state import RefactorState
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 
 logger = get_logger(__name__)
 

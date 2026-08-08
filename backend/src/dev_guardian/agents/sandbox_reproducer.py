@@ -13,13 +13,11 @@ This node deliberately reuses Phase 3 agents — no code duplication.
 
 from __future__ import annotations
 
-from langfuse import observe
-
 from dev_guardian.agents.gatekeeper import gatekeeper_node
 from dev_guardian.agents.red_team import redteam_node
 from dev_guardian.agents.state import AgentReport, GuardianState, IncidentState
 from dev_guardian.core.logging import get_logger
-from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+from dev_guardian.core.tracing import observe
 
 logger = get_logger(__name__)
 

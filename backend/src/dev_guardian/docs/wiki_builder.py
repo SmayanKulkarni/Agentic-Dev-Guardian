@@ -13,12 +13,11 @@ It assembles:
   5. Top-N ADRs (Groq-narrated, MADR-style).
 """
 
+from __future__ import annotations
+
 import datetime
 from pathlib import Path
 
-from groq import Groq
-
-from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
 from dev_guardian.docs.adr_generator import generate_adr, get_top_complex_nodes
 from dev_guardian.docs.structure_explainer import (
@@ -34,7 +33,6 @@ logger = get_logger(__name__)
 def build_wiki(
     repo_path: Path,
     mg: MemgraphClient,
-    groq_client: Groq,
     top_n: int = 5,
     user_clearance: int = 0,
 ) -> str:
@@ -47,14 +45,13 @@ def build_wiki(
     Args:
         repo_path: Root of the indexed repository.
         mg: Active MemgraphClient.
-        groq_client: Initialized Groq client for ADR narration.
         top_n: Number of high-complexity functions to document.
         user_clearance: ABAC clearance level.
 
     Returns:
         Complete wiki markdown string.
     """
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+    timestamp = datetime.datetime.now(datetime.UTC).strftime(
         "%Y-%m-%d %H:%M UTC"
     )
     sections = [
@@ -68,7 +65,7 @@ def build_wiki(
     sections.append("## 🗺️ Architectural Overview\n")
     sections.append(
         "_AI-narrated summary of inter-module relationships derived from Memgraph._\n\n"
-        + explain_module_dependencies(repo_path, mg, groq_client, user_clearance)
+        + explain_module_dependencies(repo_path, mg, user_clearance)
         + "\n\n---\n"
     )
 
@@ -77,7 +74,7 @@ def build_wiki(
     sections.append("## 🏛️ Object-Oriented Hierarchy\n")
     sections.append(
         "_AI-narrated structural analysis of inherited classes._\n\n"
-        + explain_class_hierarchy(repo_path, mg, groq_client, user_clearance)
+        + explain_class_hierarchy(repo_path, mg, user_clearance)
         + "\n\n---\n"
     )
 
@@ -107,12 +104,10 @@ def build_wiki(
 
     # ── 4. Execution Trace Summaries ─────────────────────────
     sections.append("## 📊 Execution Trace Summaries\n")
-    for name, fp, node in call_graph_sections:
+    for name, _fp, _node in call_graph_sections:
         sections.append(f"### `{name}`\n")
         sections.append(
-            explain_call_graph(
-                name, mg, groq_client, depth=2, user_clearance=user_clearance
-            )
+            explain_call_graph(name, mg, depth=2, user_clearance=user_clearance)
         )
         sections.append("\n\n")
     sections.append("---\n")
@@ -141,7 +136,7 @@ def build_wiki(
                 Path(fp).read_text(encoding="utf-8", errors="replace").splitlines()
             )
             source = "\n".join(src_lines[max(0, start_line - 1) : end_line])
-        except (OSError, IOError):
+        except OSError:
             source = f"# Source not readable for {name}"
 
         # Pull structural context for this node from Memgraph
@@ -157,7 +152,6 @@ def build_wiki(
             node_name=name,
             node_source=source,
             graphrag_context=context,
-            groq_client=groq_client,
         )
         sections.append(adr + "\n")
 

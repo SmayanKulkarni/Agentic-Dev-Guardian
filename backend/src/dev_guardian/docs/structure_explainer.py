@@ -7,17 +7,18 @@ Queries the live Memgraph AST graph and feeds the raw structural edges
 human-readable architectural summary.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from groq import Groq
+
 from dev_guardian.core.logging import get_logger
 from dev_guardian.graphrag.memgraph_client import MemgraphClient
-from dev_guardian.core.config import get_settings
 
 logger = get_logger(__name__)
 
 
 def explain_module_dependencies(
-    repo_path: Path, mg: MemgraphClient, groq_client: Groq, user_clearance: int = 0
+    repo_path: Path, mg: MemgraphClient, user_clearance: int = 0
 ) -> str:
     """
     Generate an AI-narrated summary of inter-module import relationships.
@@ -48,35 +49,22 @@ def explain_module_dependencies(
 
     edge_text = "\n".join([f"- {src} imports {dst}" for src, dst in sorted(edges)])
 
-    prompt = f"""
-    You are an expert Software (System Design) Architect analyzing a codebase's module dependencies.
-    Below is a raw list of module-level imports extracted from an AST graph:
-    
-    {edge_text}
-    
-    Task: Write a single, concise professional paragraph summarizing the high-level architecture of these modules. What are the core dependencies? Which modules act as central hubs? Do not list every single import, just synthesize the structural story.
-    """
-
-    settings = get_settings()
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=300,
-        )
-        explanation = response.choices[0].message.content.strip()
-        logger.info("explainer_module_graph_generated", edge_count=len(edges))
-        return explanation
-    except Exception as e:
-        logger.error(f"Failed to generate module explanation: {e}")
-        return f"*Error generating architectural explanation: {e}*\n\nRaw Data:\n{edge_text}"
+    return _call_structure_explainer(
+        analysis_type="module_dependencies",
+        edge_text=edge_text,
+        task_description=(
+            "Write a single, concise professional paragraph summarizing the high-level "
+            "architecture of these modules. What are the core dependencies? Which modules "
+            "act as central hubs? Do not list every single import, just synthesize the structural story."
+        ),
+        log_key="explainer_module_graph_generated",
+        log_kwargs={"edge_count": len(edges)},
+    )
 
 
 def explain_call_graph(
     function_name: str,
     mg: MemgraphClient,
-    groq_client: Groq,
     depth: int = 2,
     user_clearance: int = 0,
 ) -> str:
@@ -110,37 +98,21 @@ def explain_call_graph(
         [f"- `{caller}()` calls `{callee}()`" for caller, callee in sorted(edges)]
     )
 
-    prompt = f"""
-    You are an expert Software Architect analyzing a function's execution trace.
-    Below is a raw call graph showing what the root function `{function_name}` invokes:
-    
-    {edge_text}
-    
-    Task: Write a concise professional paragraph explaining the execution flow of `{function_name}` based on these calls. What subsystems does it trigger? What is its primary structural role? Be brief and technical.
-    """
-
-    settings = get_settings()
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=300,
-        )
-        explanation = response.choices[0].message.content.strip()
-        logger.info(
-            "explainer_call_graph_generated", fn=function_name, edge_count=len(edges)
-        )
-        return explanation
-    except Exception as e:
-        logger.error(f"Failed to generate call graph explanation: {e}")
-        return (
-            f"*Error generating call graph explanation: {e}*\n\nRaw Data:\n{edge_text}"
-        )
+    return _call_structure_explainer(
+        analysis_type="call_graph",
+        edge_text=edge_text,
+        task_description=(
+            f"Write a concise professional paragraph explaining the execution flow of "
+            f"`{function_name}` based on these calls. What subsystems does it trigger? "
+            "What is its primary structural role? Be brief and technical."
+        ),
+        log_key="explainer_call_graph_generated",
+        log_kwargs={"fn": function_name, "edge_count": len(edges)},
+    )
 
 
 def explain_class_hierarchy(
-    repo_path: Path, mg: MemgraphClient, groq_client: Groq, user_clearance: int = 0
+    repo_path: Path, mg: MemgraphClient, user_clearance: int = 0
 ) -> str:
     """
     Generate an AI-narrated summary of the object-oriented heritage.
@@ -168,28 +140,41 @@ def explain_class_hierarchy(
 
     edge_text = "\n".join(lines)
 
-    prompt = f"""
-    You are an expert Software Architect analyzing Object-Oriented Hierarchies.
-    Below is a raw list of Python class inheritances found in the repository:
-    
-    {edge_text}
-    
-    Task: Write a single concise professional paragraph summarizing this hierarchy. What are the dominant base classes? Are there deep inheritance trees or flat mixins? Evaluate the architectural shape of the OOP design based *only* on this data.
-    """
+    return _call_structure_explainer(
+        analysis_type="class_hierarchy",
+        edge_text=edge_text,
+        task_description=(
+            "Write a single concise professional paragraph summarizing this hierarchy. "
+            "What are the dominant base classes? Are there deep inheritance trees or flat mixins? "
+            "Evaluate the architectural shape of the OOP design based only on this data."
+        ),
+        log_key="explainer_class_hierarchy_generated",
+        log_kwargs={"row_count": len(rows)},
+    )
 
-    settings = get_settings()
+
+def _call_structure_explainer(
+    *,
+    analysis_type: str,
+    edge_text: str,
+    task_description: str,
+    log_key: str,
+    log_kwargs: dict,
+) -> str:
+    """Shared harness LLM call for all structure explainer functions."""
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=300,
+        from dev_guardian.harness.skill_router import run_skill
+        result = run_skill(
+            "structure_explainer",
+            {
+                "analysis_type": analysis_type,
+                "edge_text": edge_text,
+                "task_description": task_description,
+            },
         )
-        explanation = response.choices[0].message.content.strip()
-        logger.info("explainer_class_hierarchy_generated", row_count=len(rows))
+        explanation = result.parsed.explanation  # type: ignore[attr-defined]
+        logger.info(log_key, **log_kwargs)
         return explanation
-    except Exception as e:
-        logger.error(f"Failed to generate class hierarchy explanation: {e}")
-        return (
-            f"*Error generating hierarchy explanation: {e}*\n\nRaw Data:\n{edge_text}"
-        )
+    except Exception as exc:
+        logger.error("structure_explainer_failed", error=str(exc))
+        return f"*Error generating explanation: {exc}*\n\nRaw Data:\n{edge_text}"

@@ -43,7 +43,7 @@ def _impact_analysis(
         A structured list of all impacted entities with their types,
         file paths, and relationship chains.
     """
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.graphrag.clients import get_memgraph, reset_clients
 
     logger.info(
         "mcp_impact_analysis",
@@ -52,8 +52,7 @@ def _impact_analysis(
     )
 
     try:
-        client = MemgraphClient()
-        impacted = client.query_impact_analysis(
+        impacted = get_memgraph().query_impact_analysis(
             function_name=function_name,
             user_clearance=clearance,
             max_depth=max_depth,
@@ -72,6 +71,7 @@ def _impact_analysis(
         return "\n".join(lines)
 
     except Exception as exc:
+        reset_clients()
         logger.error("mcp_impact_error", error=str(exc))
         return (
             f"[Guardian Error] Impact analysis failed: {exc}. "
@@ -101,7 +101,7 @@ def _index_codebase(
         A summary of the indexing results including node, edge, and
         vector counts.
     """
-    from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+    from dev_guardian.graphrag.clients import get_retriever, reset_clients
     from dev_guardian.parsers.ast_parser import ASTParser
 
     logger.info("mcp_index_codebase", path=path, language=language)
@@ -116,8 +116,7 @@ def _index_codebase(
         parser = ASTParser(language=language)
         results = parser.parse_directory(target)
 
-        retriever = HybridRetriever()
-        summary = retriever.ingest(results)
+        summary = get_retriever().ingest(results)
 
         return (
             f"Indexed {results.total_files} files — "
@@ -127,6 +126,7 @@ def _index_codebase(
         )
 
     except Exception as exc:
+        reset_clients()
         logger.error("mcp_index_error", error=str(exc))
         return f"[Guardian Error] Indexing failed: {exc}"
 
