@@ -2,9 +2,9 @@
 Infrastructure bootstrap — Memgraph + Qdrant lifecycle for a first run.
 
 Contract (ticket 05):
-  * `guardian init` is the *only* thing that starts containers. Every other
+  * `dev-guardian init` is the *only* thing that starts containers. Every other
     command performs a cheap readiness probe and tells the user to run
-    `guardian init` when the services are down. Nothing auto-starts Docker
+    `dev-guardian init` when the services are down. Nothing auto-starts Docker
     behind an MCP stdio session, where there is no terminal to prompt on.
   * No compose file ships. Two `docker run` invocations with fixed container
     names is fewer moving parts than shipping and locating a compose asset,
@@ -13,7 +13,7 @@ Contract (ticket 05):
     `/readyz` for Qdrant — polled until a deadline, never a sleep.
   * A service already answering on its port is reused, whoever started it.
   * Guardian only ever stops containers it created (matched by name), and
-    only when the user explicitly asks via `guardian down`.
+    only when the user explicitly asks via `dev-guardian down`.
 
 All human-facing output goes to stderr so it can never corrupt an MCP stdio
 stream sharing the process.
@@ -104,7 +104,7 @@ def require_ready() -> None:
     detail = ", ".join(f"{s.name} ({s.host}:{s.port})" for s in down)
     raise InfraError(
         f"Guardian's backing services are not reachable: {detail}.\n"
-        "Run `guardian init` to start them, or point GUARDIAN_MEMGRAPH_HOST / "
+        "Run `dev-guardian init` to start them, or point GUARDIAN_MEMGRAPH_HOST / "
         "GUARDIAN_QDRANT_HOST at instances you already run."
     )
 
@@ -118,10 +118,39 @@ def _docker(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _docker_available() -> bool:
+    return _docker_unavailable_reason() is None
+
+
+def _docker_unavailable_reason() -> str | None:
+    """None when Docker is usable, else a user-facing sentence saying why.
+
+    "Not installed" and "installed but you lack permission on the socket" are
+    different problems with different fixes; telling a user in the `docker`
+    group's blind spot to go install Docker sends them the wrong way.
+    """
     try:
-        return _docker("info").returncode == 0
+        res = _docker("info")
     except FileNotFoundError:
-        return False
+        return (
+            "Docker is not installed or not on PATH. Install it "
+            "(https://docs.docker.com/get-docker/) and rerun `dev-guardian init`."
+        )
+    if res.returncode == 0:
+        return None
+    stderr = res.stderr.strip()
+    if "permission denied" in stderr.lower():
+        return (
+            "Docker is installed but this user cannot reach the daemon socket:\n"
+            f"  {stderr.splitlines()[-1] if stderr else 'permission denied'}\n"
+            "Add yourself to the docker group and start a new login session:\n"
+            "  sudo usermod -aG docker $USER   # then log out and back in\n"
+            "Or rerun `dev-guardian init` as a user that can reach Docker."
+        )
+    return (
+        "Docker is installed but not responding: "
+        + (stderr.splitlines()[-1] if stderr else f"`docker info` exited {res.returncode}")
+        + "\nStart the Docker daemon and rerun `dev-guardian init`."
+    )
 
 
 def _container_state(name: str) -> str:
@@ -182,12 +211,14 @@ def bootstrap(timeout: float = READY_TIMEOUT_SECONDS) -> list[ServiceStatus]:
     if not missing:
         return statuses
 
-    if not _docker_available():
+    reason = _docker_unavailable_reason()
+    if reason is not None:
         raise InfraError(
-            "Docker is not available, and these services are not reachable: "
+            "These services are not reachable: "
             + ", ".join(f"{s.name} ({s.host}:{s.port})" for s in missing)
-            + ".\nInstall Docker (https://docs.docker.com/get-docker/) and rerun "
-            "`guardian init`, or run Memgraph and Qdrant yourself and point "
+            + ", and Guardian cannot start them.\n"
+            + reason
+            + "\nAlternatively, run Memgraph and Qdrant yourself and point "
             "GUARDIAN_MEMGRAPH_HOST / GUARDIAN_QDRANT_HOST at them."
         )
 

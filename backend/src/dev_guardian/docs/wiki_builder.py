@@ -4,7 +4,7 @@ Wiki Builder — Phase 5.3: Auto-Generating Dynamic Documentation.
 Orchestrates mermaid_generator and adr_generator into a single
 comprehensive markdown wiki document (GUARDIAN_WIKI.md).
 
-This module is the top-level entrypoint for the `guardian docs` command.
+This module is the top-level entrypoint for the `dev-guardian docs` command.
 It assembles:
   1. Repo summary header.
   2. Module-level dependency flowchart (Mermaid).

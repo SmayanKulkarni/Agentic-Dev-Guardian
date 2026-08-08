@@ -111,7 +111,7 @@ def query_guardian_graph(
         return (
             f"[Guardian Error] GraphRAG query failed: {exc}. "
             "Ensure Memgraph and Qdrant are running and the codebase "
-            "has been indexed with `guardian index <path>`."
+            "has been indexed with `dev-guardian index <path>`."
         )
 
 

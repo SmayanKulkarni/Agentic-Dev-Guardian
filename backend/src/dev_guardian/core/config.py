@@ -4,7 +4,7 @@ Pydantic Configuration Models for Agentic Dev Guardian.
 Configuration contract (ticket 06):
 
   * **Environment variables are the primary channel.** An MCP client
-    (Cursor, Claude Desktop, Windsurf) spawns `guardian serve` with its own
+    (Cursor, Claude Desktop, Windsurf) spawns `dev-guardian serve` with its own
     `env` block, so anything Guardian needs must be settable that way.
   * Every setting accepts a `GUARDIAN_`-prefixed name — unambiguous inside a
     shared IDE environment — and keeps its unprefixed vendor name
@@ -14,7 +14,7 @@ Configuration contract (ticket 06):
     ascending priority: the user-level file first, then the repo-local ones,
     so a checkout can override a global default. Real environment variables
     beat every file.
-  * **Nothing is written by Guardian.** `guardian init --print-mcp-config`
+  * **Nothing is written by Guardian.** `dev-guardian init --print-mcp-config`
     emits the JSON block for the user to paste; there is no secret store to
     manage, corrupt, or leak.
   * Global vs per-project: credentials, provider choice and service endpoints

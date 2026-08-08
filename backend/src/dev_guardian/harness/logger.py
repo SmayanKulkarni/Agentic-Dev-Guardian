@@ -1,7 +1,7 @@
 """
 HarnessLogger — SQLite-backed call record store.
 
-Writes one row per LLM call so `guardian logs` can surface latency,
+Writes one row per LLM call so `dev-guardian logs` can surface latency,
 token usage, retry counts, and validation failures without Langfuse.
 
 Schema (CallRecord):

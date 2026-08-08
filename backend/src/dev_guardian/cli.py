@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
 
 from dev_guardian import __version__
 from dev_guardian.core.logging import get_logger
@@ -27,6 +28,19 @@ app = typer.Typer(
 
 logger = get_logger(__name__)
 
+_stdout = Console()
+_stderr = Console(stderr=True)
+
+
+def _echo(message: str = "", err: bool = False) -> None:
+    """Print a line, rendering rich markup.
+
+    `typer.echo` is `click.echo`: it does not interpret `[bold]`-style markup,
+    so every tagged string used to reach the user with the tags still in it.
+    `rich_markup_mode` only ever applied to `--help` text.
+    """
+    (_stderr if err else _stdout).print(message)
+
 
 def _require_infra() -> None:
     """Fail fast with a user-facing message when Memgraph/Qdrant are down.
@@ -38,7 +52,7 @@ def _require_infra() -> None:
     try:
         require_ready()
     except InfraError as exc:
-        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
 
@@ -106,19 +120,19 @@ def init(
     from dev_guardian.core.infra import InfraError, bootstrap
 
     if print_mcp_config:
-        typer.echo(_mcp_config_json())
+        _echo(_mcp_config_json())
         return
 
     try:
         statuses = bootstrap(timeout=timeout)
     except InfraError as exc:
-        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     for s in statuses:
         mark = "✅" if s.ready else "❌"
-        typer.echo(f"{mark} {s.name}: {s.host}:{s.port}")
-    typer.echo(
+        _echo(f"{mark} {s.name}: {s.host}:{s.port}")
+    _echo(
         "[bold green]Guardian is ready.[/bold green] "
         "Next: dev-guardian index <path>, then dev-guardian init --print-mcp-config"
     )
@@ -135,13 +149,13 @@ def down() -> None:
     try:
         stopped = teardown()
     except InfraError as exc:
-        typer.echo(f"[bold red]✗[/bold red] {exc}", err=True)
+        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     if stopped:
-        typer.echo(f"[bold green]Stopped:[/bold green] {', '.join(stopped)}")
+        _echo(f"[bold green]Stopped:[/bold green] {', '.join(stopped)}")
     else:
-        typer.echo("Nothing to stop — no Guardian-started containers running.")
+        _echo("Nothing to stop — no Guardian-started containers running.")
 
 
 @app.command()
@@ -186,17 +200,16 @@ def index(
     from dev_guardian.parsers.ast_parser import ASTParser
 
     logger.info("index_start", path=str(path), language=language)
-    typer.echo(f"[bold green]🔍 Indexing codebase:[/bold green] {path}")
+    _echo(f"[bold green]🔍 Indexing codebase:[/bold green] {path}")
 
     if not skip_vectors:
         strategy = predict_embedding_strategy(path, language)
         if strategy == "lazy":
-            typer.echo(
+            _echo(
                 "[yellow]⚠ Large codebase detected! Automatically switching to "
                 "JIT lazy embeddings (--skip-vectors) to prevent OOM.[/yellow]"
             )
             skip_vectors = True
-    typer.echo(f"[bold green]🔍 Indexing codebase:[/bold green] {path}")
 
     parser = ASTParser(language=language)
 
@@ -207,23 +220,23 @@ def index(
         if not parser._should_skip(f)
     )
     total_files = len(all_files)
-    typer.echo(f"[cyan]📂 Found {total_files} source files.[/cyan]")
+    _echo(f"[cyan]📂 Found {total_files} source files.[/cyan]")
 
     # ── Init GraphRAG backends ─────────────────────────────────
     from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
-    typer.echo("[cyan]📡 Initializing Memgraph...[/cyan]")
+    _echo("[cyan]📡 Initializing Memgraph...[/cyan]")
     mg = MemgraphClient()
     mg.ensure_indexes()
 
     qd = None
     if not skip_vectors:
-        typer.echo("[cyan]📡 Initializing Qdrant + ONNX embedder...[/cyan]")
+        _echo("[cyan]📡 Initializing Qdrant + ONNX embedder...[/cyan]")
         from dev_guardian.graphrag.qdrant_client import QdrantCodeClient
         qd = QdrantCodeClient()
         qd.ensure_collection()
     else:
-        typer.echo("[yellow]⚡ --skip-vectors: Qdrant embedding disabled (saves RAM).[/yellow]")
+        _echo("[yellow]⚡ --skip-vectors: Qdrant embedding disabled (saves RAM).[/yellow]")
 
     # ── Stream: parse one file → ingest → discard ──────────────
     total_nodes = 0
@@ -258,13 +271,13 @@ def index(
 
         # Progress every 50 files
         if file_count % 50 == 0 or file_count == total_files:
-            typer.echo(
+            _echo(
                 f"  [{file_count}/{total_files}] "
                 f"{total_nodes} nodes, {total_edges} edges, "
                 f"{total_vectors} vectors"
             )
 
-    typer.echo(
+    _echo(
         f"[bold cyan]✅ Indexed {file_count} files — "
         f"{total_nodes} Memgraph Nodes, {total_edges} Memgraph Edges, "
         f"{total_vectors} Qdrant Vectors.[/bold cyan]"
@@ -316,13 +329,13 @@ def evaluate(
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
 
     logger.info("evaluate_start", diff_file=str(diff_file))
-    typer.echo(f"[bold green]🛡️  Evaluating PR diff:[/bold green] {diff_file}")
+    _echo(f"[bold green]🛡️  Evaluating PR diff:[/bold green] {diff_file}")
 
     # Read the diff
     pr_diff = diff_file.read_text(encoding="utf-8")
 
     # Retrieve GraphRAG context
-    typer.echo("[cyan]📡 Querying GraphRAG (Memgraph + Qdrant)...[/cyan]")
+    _echo("[cyan]📡 Querying GraphRAG (Memgraph + Qdrant)...[/cyan]")
     retriever = HybridRetriever()
     
     # ── JIT Vector Embedding (Phase 5.7) ──────────
@@ -337,7 +350,7 @@ def evaluate(
                 changed_entities.append(m.group(1))
                 
     if changed_entities:
-        typer.echo(f"[cyan]🧠 JIT Embedding {len(changed_entities)} detected entities...[/cyan]")
+        _echo(f"[cyan]🧠 JIT Embedding {len(changed_entities)} detected entities...[/cyan]")
         retriever.jit_embed_nodes(changed_entities, user_clearance=clearance)
 
     rag_result = retriever.retrieve(
@@ -348,7 +361,7 @@ def evaluate(
     context = rag_result.get("merged_context", "")
 
     # Build and invoke the graph
-    typer.echo("[cyan]🤖 Invoking MoA Agent Pipeline...[/cyan]")
+    _echo("[cyan]🤖 Invoking MoA Agent Pipeline...[/cyan]")
     graph = build_guardian_graph()
     result = graph.invoke(
         {
@@ -364,23 +377,23 @@ def evaluate(
     decision = result.get("decision", "unknown")
     messages = result.get("messages", [])
 
-    typer.echo("")
+    _echo("")
     for msg in messages:
-        typer.echo(f"  {msg}")
-    typer.echo("")
+        _echo(f"  {msg}")
+    _echo("")
 
     if decision == "approve":
-        typer.echo("[bold green]✅ APPROVED — PR is safe to merge.[/bold green]")
+        _echo("[bold green]✅ APPROVED — PR is safe to merge.[/bold green]")
     elif decision in ("remediate", "remediated"):
-        typer.echo(
+        _echo(
             "[bold yellow]🔧 REMEDIATED — PR had issues. "
             "Suggested fix below:[/bold yellow]"
         )
         fix = result.get("remediation_diff", "")
         if fix:
-            typer.echo(f"\n```\n{fix}\n```")
+            _echo(f"\n```\n{fix}\n```")
     else:
-        typer.echo(f"[bold red]❌ Decision: {decision}[/bold red]")
+        _echo(f"[bold red]❌ Decision: {decision}[/bold red]")
 
     logger.info("evaluate_complete", decision=decision)
 
@@ -439,8 +452,8 @@ def audit(
     from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
     logger.info("audit_start", path=str(path), top=top)
-    typer.echo(f"[bold green]🔍 Guardian Audit:[/bold green] {path}")
-    typer.echo(f"[cyan]Scanning top {top} highest-risk functions via Memgraph...[/cyan]\n")
+    _echo(f"[bold green]🔍 Guardian Audit:[/bold green] {path}")
+    _echo(f"[cyan]Scanning top {top} highest-risk functions via Memgraph...[/cyan]\n")
 
     mg = MemgraphClient()
 
@@ -460,8 +473,8 @@ def audit(
     )
 
     if not risky:
-        typer.echo("[yellow]No high-complexity functions found in the graph. "
-                   "Have you run `guardian index` on this path?[/yellow]")
+        _echo("[yellow]No high-complexity functions found in the graph. "
+                   "Have you run `dev-guardian index` on this path?[/yellow]")
         return
 
     # ── Step 2: Agents are functions (node-style) ─────────────────
@@ -482,7 +495,7 @@ def audit(
         call_count = row["calls"]
         rel_path = fp.replace(str(path) + "/", "")
 
-        typer.echo(f"  [{rank}/{top}] Auditing `{fn_name}` ({call_count} calls) in {rel_path}")
+        _echo(f"  [{rank}/{top}] Auditing `{fn_name}` ({call_count} calls) in {rel_path}")
 
         # Read source lines
         try:
@@ -490,7 +503,7 @@ def audit(
             fn_lines = src_lines[max(0, start_line - 1): end_line]
             fn_source = "\n".join(fn_lines)
         except OSError as e:
-            typer.echo(f"    [yellow]⚠ Could not read {fp}: {e}[/yellow]")
+            _echo(f"    [yellow]⚠ Could not read {fp}: {e}[/yellow]")
             continue
 
         # Wrap as synthetic diff (treat the function as a new addition)
@@ -551,7 +564,7 @@ def audit(
             sev = "pass"
 
         icon = {"high": "❌", "medium": "⚠️ ", "pass": "✅"}.get(sev, "?")
-        typer.echo(f"    {icon} {badge}  Gatekeeper={gk_verdict}  RedTeam={rt_verdict}")
+        _echo(f"    {icon} {badge}  Gatekeeper={gk_verdict}  RedTeam={rt_verdict}")
 
         findings.append({
             "rank": rank, "name": fn_name, "file": rel_path,
@@ -583,12 +596,12 @@ def audit(
     )
 
     output.write_text("\n".join(report_sections), encoding="utf-8")
-    typer.echo("")
-    typer.echo(
+    _echo("")
+    _echo(
         f"[bold cyan]✅ Audit complete: {high} high, {medium} medium, "
         f"{len(findings) - high - medium} pass[/bold cyan]"
     )
-    typer.echo(f"[bold green]📄 Report written to:[/bold green] {output}")
+    _echo(f"[bold green]📄 Report written to:[/bold green] {output}")
     logger.info("audit_complete", high=high, medium=medium)
 
 
@@ -645,14 +658,14 @@ def incident(
     elif trace:
         stack_trace = trace
     else:
-        typer.echo(
+        _echo(
             "[bold red]Error:[/bold red] Provide --trace or --trace-file.",
             err=True,
         )
         raise typer.Exit(1)
 
-    typer.echo("[bold green]🚨 SRE Incident Response Pipeline[/bold green]")
-    typer.echo(f"   Repository: {path}")
+    _echo("[bold green]🚨 SRE Incident Response Pipeline[/bold green]")
+    _echo(f"   Repository: {path}")
 
     if triage_only:
         # ── Fast path: triage only (no LLM) ────────────────────
@@ -661,11 +674,11 @@ def incident(
             {"stack_trace": stack_trace, "repo_path": str(path), "user_clearance": 0, "messages": []}
         )
         ctx = result.get("incident_context", {})
-        typer.echo("\n[bold]Triage Result:[/bold]")
-        typer.echo(f"  Failing function : {ctx.get('failing_function', '?')}")
-        typer.echo(f"  File             : {ctx.get('failing_file', '?')}")
-        typer.echo(f"  Exception        : {ctx.get('exception_type', '?')}: {ctx.get('exception_msg', '')}")
-        typer.echo(f"  Callers at risk  : {ctx.get('caller_count', 0)}")
+        _echo("\n[bold]Triage Result:[/bold]")
+        _echo(f"  Failing function : {ctx.get('failing_function', '?')}")
+        _echo(f"  File             : {ctx.get('failing_file', '?')}")
+        _echo(f"  Exception        : {ctx.get('exception_type', '?')}: {ctx.get('exception_msg', '')}")
+        _echo(f"  Callers at risk  : {ctx.get('caller_count', 0)}")
         return
 
     # ── Full SRE pipeline ───────────────────────────────────────
@@ -680,9 +693,9 @@ def incident(
     messages = result.get("messages", [])
     ctx = result.get("incident_context", {})
 
-    typer.echo("\n[bold]Agent Trace:[/bold]")
+    _echo("\n[bold]Agent Trace:[/bold]")
     for msg in messages:
-        typer.echo(f"  {msg}")
+        _echo(f"  {msg}")
 
     header_lines = [
         "<!-- Guardian SRE Hotfix Blueprint -->",
@@ -691,7 +704,7 @@ def incident(
     ]
     output.write_text("\n".join(header_lines) + "\n" + blueprint, encoding="utf-8")
 
-    typer.echo(
+    _echo(
         f"\n[bold green]✅ Hotfix Blueprint written to:[/bold green] {output} "
         f"(verdict: {verdict})"
     )
@@ -700,7 +713,7 @@ def incident(
 @app.command()
 def version() -> None:
     """Print the current Agentic Dev Guardian version."""
-    typer.echo(f"Agentic Dev Guardian v{__version__}")
+    _echo(f"Agentic Dev Guardian v{__version__}")
 
 
 @app.command()
@@ -748,10 +761,10 @@ def refactor(
     from dev_guardian.agents.refactor_patterns import list_patterns
 
     if not pattern:
-        typer.echo("[bold yellow]Registered refactoring patterns (bypass LLM translation):[/bold yellow]")
+        _echo("[bold yellow]Registered refactoring patterns (bypass LLM translation):[/bold yellow]")
         for p in list_patterns():
-            typer.echo(f"  ● [cyan]{p['key']}[/cyan]: {p['description']}")
-        typer.echo(
+            _echo(f"  ● [cyan]{p['key']}[/cyan]: {p['description']}")
+        _echo(
             "\n[dim]Tip: You can also pass any natural language intent as --pattern.[/dim]"
         )
         return
@@ -760,8 +773,8 @@ def refactor(
 
     from dev_guardian.agents.refactor_graph import build_refactor_graph
 
-    typer.echo(f"[bold green]🔧 Running Self-Healing Refactor:[/bold green] {pattern}")
-    typer.echo(f"   Repository: {path}")
+    _echo(f"[bold green]🔧 Running Self-Healing Refactor:[/bold green] {pattern}")
+    _echo(f"   Repository: {path}")
 
     graph = build_refactor_graph()
     pattern_params = {}
@@ -785,9 +798,9 @@ def refactor(
     total_entities = result.get("refactor_plan", {}).get("total_entities", 0)
 
     # ── Print agent trace ─────────────────────────────────────
-    typer.echo("\n[bold]Agent Trace:[/bold]")
+    _echo("\n[bold]Agent Trace:[/bold]")
     for msg in messages:
-        typer.echo(f"  {msg}")
+        _echo(f"  {msg}")
 
     # ── Write blueprint to file ───────────────────────────────
     header_lines = [
@@ -798,7 +811,7 @@ def refactor(
     header = "\n".join(header_lines) + "\n"
     output.write_text(header + blueprint, encoding="utf-8")
 
-    typer.echo(
+    _echo(
         f"\n[bold green]✅ Blueprint written to:[/bold green] {output} "
         f"({total_entities} entities, validation: {verdict})"
     )
@@ -841,7 +854,7 @@ def serve(
     """
     valid = {"stdio", "streamable-http", "sse"}
     if transport not in valid:
-        typer.echo(
+        _echo(
             f"[bold red]Unknown transport '{transport}'. "
             f"Expected one of: {', '.join(sorted(valid))}.[/bold red]",
             err=True,
@@ -853,7 +866,7 @@ def serve(
     from dev_guardian.mcp_server import run_server
 
     where = "stdio" if transport == "stdio" else f"{transport} on {host}:{port}"
-    typer.echo(f"[bold cyan]🚀 Starting MCP Server ({where})...[/bold cyan]", err=True)
+    _echo(f"[bold cyan]🚀 Starting MCP Server ({where})...[/bold cyan]", err=True)
     run_server(transport=transport, host=host, port=port)
 
 
@@ -909,12 +922,12 @@ def docs(
     from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
     logger.info("docs_start", path=str(path), top=top)
-    typer.echo(f"[bold green]📖 Guardian Docs:[/bold green] {path}")
-    typer.echo(f"[cyan]Generating wiki for top {top} highest-complexity functions...[/cyan]")
+    _echo(f"[bold green]📖 Guardian Docs:[/bold green] {path}")
+    _echo(f"[cyan]Generating wiki for top {top} highest-complexity functions...[/cyan]")
 
     mg = MemgraphClient()
 
-    typer.echo("[cyan]📡 Querying Memgraph for module graph...[/cyan]")
+    _echo("[cyan]📡 Querying Memgraph for module graph...[/cyan]")
     wiki_content = build_wiki(
         repo_path=path,
         mg=mg,
@@ -923,7 +936,7 @@ def docs(
     )
 
     wiki_path = save_wiki(wiki_content, output)
-    typer.echo(f"\n[bold green]✅ Wiki written to:[/bold green] {wiki_path}")
+    _echo(f"\n[bold green]✅ Wiki written to:[/bold green] {wiki_path}")
     logger.info("docs_complete", output=str(wiki_path))
 
 
