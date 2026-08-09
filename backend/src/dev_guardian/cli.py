@@ -171,7 +171,7 @@ def index(
     ],
     language: Annotated[
         str,
-        typer.Option("--language", "-l", help="Programming language to parse."),
+        typer.Option("--language", "-l", help="Source language. Only 'python' is supported today."),
     ] = "python",
     skip_vectors: Annotated[
         bool,
