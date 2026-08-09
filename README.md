@@ -199,8 +199,11 @@ keep your IDE's context window lean:
 - `equip_capability` and `unequip_capability` load and unload a domain's tools on demand
 
 Everything heavier arrives just in time. `equip_capability("pr_governance")` adds
-`evaluate_pr_diff`, `codebase_intelligence` adds `impact_analysis` and `index_codebase`,
-and `incident_response` and `self_healing` bring their own. The server fires
+`evaluate_pr_diff`, `codebase_intelligence` adds `impact_analysis`, `index_codebase`,
+`audit_codebase` and `generate_architecture_docs`, and `incident_response` and
+`self_healing` bring their own. Every CLI command that acts on an indexed repository has
+an MCP equivalent — only `init` and `down`, which manage Docker, stay terminal-only, since
+nothing auto-starts a container from a session with no terminal to prompt on. The server fires
 `notifications/tools/list_changed` on each swap, so a client that caches the tool list for
 a session picks the new tools up on its next refresh rather than right away.
 

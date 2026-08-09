@@ -1,7 +1,7 @@
 """
 Codebase Intelligence Capability Cluster.
 
-Exposes: impact_analysis, index_codebase
+Exposes: impact_analysis, index_codebase, audit_codebase, generate_architecture_docs
 Domain : "codebase_intelligence"
 
 Loaded JIT when the IDE agent calls equip_capability("codebase_intelligence").
@@ -131,16 +131,133 @@ def _index_codebase(
         return f"[Guardian Error] Indexing failed: {exc}"
 
 
+def _audit_codebase(
+    path: str,
+    top: int = 5,
+    clearance: int = 0,
+    output: str = "",
+) -> str:
+    """Audit a repository's highest-risk functions for bugs and bad patterns.
+
+    Ranks functions by blast radius (how many calls they make), reads each
+    one from disk, and runs it through the Gatekeeper and Red Team agents as
+    a synthetic diff. This is the proactive counterpart to evaluate_pr_diff:
+    it finds problems in code that is already merged, before anyone opens a PR.
+
+    The repository must already be indexed — call index_codebase first if a
+    run returns no findings.
+
+    Args:
+        path: Absolute path to the indexed repository root.
+        top: How many of the highest blast-radius functions to audit.
+             Each one costs several LLM calls, so keep this small.
+        clearance: ABAC security clearance level.
+        output: Optional file path to also write the markdown report to.
+                Leave empty to only return it.
+
+    Returns:
+        The markdown audit report, prefixed with a one-line severity tally.
+    """
+    from dev_guardian.audit import run_audit
+
+    logger.info("mcp_audit_codebase", path=path, top=top)
+
+    try:
+        target = Path(path)
+        if not target.is_dir():
+            return (
+                f"[Guardian Error] Path does not exist or is not a directory: {path}"
+            )
+
+        report = run_audit(path=target, top=top, clearance=clearance)
+
+        if output:
+            Path(output).write_text(report.markdown, encoding="utf-8")
+
+        counts = report.counts
+        tally = (
+            f"{counts['high']} high, {counts['medium']} medium, "
+            f"{counts['error']} errored, {counts['pass']} pass"
+        )
+        written = f" Report written to {output}." if output else ""
+        return f"Audited {len(report.findings)} functions: {tally}.{written}\n\n{report.markdown}"
+
+    except Exception as exc:
+        logger.error("mcp_audit_error", error=str(exc))
+        return f"[Guardian Error] Audit failed: {exc}"
+
+
+def _generate_architecture_docs(
+    path: str,
+    top: int = 5,
+    clearance: int = 0,
+    output: str = "",
+) -> str:
+    """Generate an architecture wiki from the indexed graph.
+
+    Reads the already-indexed Memgraph AST graph — no re-parsing — and
+    narrates it into markdown containing a module dependency flowchart, the
+    class inheritance hierarchy, call graphs for the top-N functions (all as
+    Mermaid diagrams), and LLM-written Architectural Decision Records.
+
+    Use this to onboard onto an unfamiliar repository, or to refresh
+    architecture docs after a structural change.
+
+    Args:
+        path: Absolute path to the indexed repository root.
+        top: How many of the highest-complexity functions to write ADRs for.
+        clearance: ABAC security clearance level.
+        output: Optional file path to also write the wiki to (the CLI
+                default is GUARDIAN_WIKI.md). Leave empty to only return it.
+
+    Returns:
+        The generated wiki markdown.
+    """
+    from dev_guardian.docs.wiki_builder import build_wiki, save_wiki
+    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+
+    logger.info("mcp_generate_docs", path=path, top=top)
+
+    try:
+        target = Path(path)
+        if not target.is_dir():
+            return (
+                f"[Guardian Error] Path does not exist or is not a directory: {path}"
+            )
+
+        wiki = build_wiki(
+            repo_path=target,
+            mg=MemgraphClient(),
+            top_n=top,
+            user_clearance=clearance,
+        )
+
+        if output:
+            written = save_wiki(wiki, Path(output))
+            return f"Wiki written to {written}.\n\n{wiki}"
+        return wiki
+
+    except Exception as exc:
+        logger.error("mcp_docs_error", error=str(exc))
+        return (
+            f"[Guardian Error] Documentation generation failed: {exc}. "
+            "Ensure Memgraph is running and the codebase has been indexed."
+        )
+
+
 # ── Cluster registration entry ──────────────────────────────────────
 
 CLUSTER_REGISTRY["codebase_intelligence"] = {
     "description": (
-        "Codebase structural analysis: blast-radius impact analysis and "
-        "on-demand GraphRAG re-indexing of a repository."
+        "Codebase structural analysis: blast-radius impact analysis, "
+        "on-demand GraphRAG re-indexing, proactive red-team audit of the "
+        "riskiest functions, and generated architecture documentation."
     ),
     "tools": {
         "impact_analysis": _impact_analysis,
         "index_codebase": _index_codebase,
+        "audit_codebase": _audit_codebase,
+        "generate_architecture_docs": _generate_architecture_docs,
     },
     "prompts": ["investigate_function"],
 }
