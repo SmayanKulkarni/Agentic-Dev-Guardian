@@ -59,13 +59,25 @@ def _require_infra() -> None:
         raise typer.Exit(code=1) from exc
 
 
-def _mcp_config_json() -> str:
-    """The MCP client block for this install, with the resolved settings.
+_MCP_COMMAND = "uvx"
+_MCP_ARGS = ["--from", "agentic-dev-guardian", "dev-guardian", "serve"]
 
-    Guardian writes no config of its own (ticket 06) — the IDE's `env` block
-    is the configuration channel, so `init` just prints what to paste.
-    """
-    import json
+# Where each client reads its MCP config, and under which top-level key. The
+# shapes genuinely differ: VS Code uses `servers`, Codex uses TOML, everyone
+# else settled on Claude Desktop's `mcpServers`.
+MCP_CLIENTS: dict[str, str] = {
+    "claude": "~/.claude.json, or `claude mcp add-json guardian '<block>'`",
+    "cursor": "~/.cursor/mcp.json (or .cursor/mcp.json in the repo)",
+    "windsurf": "~/.codeium/windsurf/mcp_config.json",
+    "antigravity": "~/.antigravity/mcp_config.json",
+    "claude-desktop": "claude_desktop_config.json",
+    "vscode": ".vscode/mcp.json (or the user-level mcp.json)",
+    "codex": "~/.codex/config.toml",
+}
+
+
+def _mcp_env() -> dict[str, str]:
+    """The env block every client shape carries, from the resolved settings."""
     import os
 
     from dev_guardian.core.config import get_settings
@@ -91,21 +103,46 @@ def _mcp_config_json() -> str:
     model = os.environ.get("GUARDIAN_MODEL")
     if model:
         env["GUARDIAN_MODEL"] = model
-    block = {
-        "mcpServers": {
-            "guardian": {
-                "command": "uvx",
-                "args": [
-                    "--from",
-                    "agentic-dev-guardian",
-                    "dev-guardian",
-                    "serve",
-                ],
-                "env": env,
-            }
-        }
-    }
-    return json.dumps(block, indent=2)
+    preload = os.environ.get("GUARDIAN_PRELOAD_CLUSTERS")
+    if preload:
+        env["GUARDIAN_PRELOAD_CLUSTERS"] = preload
+    return env
+
+
+def _mcp_config_json(client: str = "claude") -> str:
+    """The MCP client block for this install, in `client`'s own shape.
+
+    Guardian writes no config of its own (ticket 06) — the IDE's `env` block
+    is the configuration channel, so `init` just prints what to paste.
+
+    Raises:
+        KeyError: `client` is not one of MCP_CLIENTS.
+    """
+    import json
+
+    if client not in MCP_CLIENTS:
+        raise KeyError(client)
+
+    env = _mcp_env()
+
+    if client == "codex":
+        # Codex reads TOML, not JSON. json.dumps doubles as a TOML string
+        # literal writer here: both use "..." with backslash escapes.
+        lines = [
+            "[mcp_servers.guardian]",
+            f"command = {json.dumps(_MCP_COMMAND)}",
+            f"args = [{', '.join(json.dumps(a) for a in _MCP_ARGS)}]",
+            "",
+            "[mcp_servers.guardian.env]",
+            *(f"{k} = {json.dumps(v)}" for k, v in env.items()),
+        ]
+        return "\n".join(lines)
+
+    server = {"command": _MCP_COMMAND, "args": list(_MCP_ARGS), "env": env}
+    if client == "vscode":
+        # VS Code keys servers under `servers` and wants the transport named.
+        return json.dumps({"servers": {"guardian": {"type": "stdio", **server}}}, indent=2)
+    return json.dumps({"mcpServers": {"guardian": server}}, indent=2)
 
 
 @app.command()
@@ -118,9 +155,17 @@ def init(
         bool,
         typer.Option(
             "--print-mcp-config",
-            help="Print the JSON block to paste into your MCP client and exit.",
+            help="Print the config block to paste into your MCP client and exit.",
         ),
     ] = False,
+    client: Annotated[
+        str,
+        typer.Option(
+            "--client",
+            help="Which client --print-mcp-config targets: "
+            + ", ".join(MCP_CLIENTS),
+        ),
+    ] = "claude",
 ) -> None:
     """Start and verify Guardian's backing services (Memgraph + Qdrant).
 
@@ -130,7 +175,17 @@ def init(
     from dev_guardian.core.infra import InfraError, bootstrap
 
     if print_mcp_config:
-        _echo(_mcp_config_json())
+        try:
+            block = _mcp_config_json(client)
+        except KeyError:
+            _echo(
+                f"[bold red]Unknown client '{client}'. Expected one of: "
+                f"{', '.join(MCP_CLIENTS)}.[/bold red]",
+                err=True,
+            )
+            raise typer.Exit(code=2) from None
+        _echo(f"[dim]# paste into {MCP_CLIENTS[client]}[/dim]", err=True)
+        print(block)
         return
 
     try:

@@ -32,6 +32,7 @@ Security:
 from __future__ import annotations
 
 import json
+import os
 
 from mcp.server.fastmcp import FastMCP
 
@@ -322,17 +323,20 @@ def review_pr(diff: str) -> str:
     """
     return (
         "You are reviewing a Pull Request using the Agentic Dev Guardian system.\n\n"
+        "Guardian's tools may appear under a client-specific prefix (for example "
+        "`guardian__equip_capability`). Match them by name suffix, not exactly.\n\n"
         "## Instructions\n"
-        "1. Call `equip_capability('pr_governance')` to load the evaluation tools.\n"
-        "2. Call `query_guardian_graph` with a summary of the diff to understand "
+        "1. Use the equip_capability tool with domain 'pr_governance' to load the "
+        "   evaluation tools.\n"
+        "2. Use query_guardian_graph with a summary of the diff to understand "
         "   the affected codebase area.\n"
-        "3. Call `evaluate_pr_diff` with the full diff content.\n"
+        "3. Use evaluate_pr_diff with the full diff content.\n"
         "4. Present results as a structured code review:\n"
         "   - Decision (APPROVE / REMEDIATE)\n"
         "   - Architectural violations found\n"
         "   - Adversarial test cases generated\n"
         "   - Suggested fixes (if any)\n"
-        "5. Call `unequip_capability('pr_governance')` when done.\n\n"
+        "5. Use unequip_capability with domain 'pr_governance' when done.\n\n"
         f"## PR Diff\n```diff\n{diff}\n```"
     )
 
@@ -346,24 +350,55 @@ def investigate_function(function_name: str) -> str:
     """
     return (
         f"Investigate the function `{function_name}` in the codebase.\n\n"
+        "Guardian's tools may appear under a client-specific prefix (for example "
+        "`guardian__equip_capability`). Match them by name suffix, not exactly.\n\n"
         "## Instructions\n"
-        "1. Call `equip_capability('codebase_intelligence')` to load analysis tools.\n"
-        f"2. Call `impact_analysis` for `{function_name}` to find all "
+        "1. Use equip_capability with domain 'codebase_intelligence' to load "
+        "   analysis tools.\n"
+        f"2. Use impact_analysis for `{function_name}` to find all "
         "   downstream dependencies.\n"
-        f'3. Call `query_guardian_graph` with "{function_name}" to get '
+        f'3. Use query_guardian_graph with "{function_name}" to get '
         "   semantic context.\n"
         "4. Summarize:\n"
         f"   - What `{function_name}` does\n"
         "   - What depends on it (blast radius)\n"
         "   - Risks of modifying it\n"
         "   - Suggested refactoring approach (if applicable)\n"
-        "5. Call `unequip_capability('codebase_intelligence')` when done.\n"
+        "5. Use unequip_capability with domain 'codebase_intelligence' when done.\n"
     )
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  SERVER ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════
+
+
+def resolve_preload(value: str | None) -> list[str]:
+    """Cluster names named by GUARDIAN_PRELOAD_CLUSTERS.
+
+    ``all`` means every registered cluster; otherwise a comma-separated list.
+    Unknown names are dropped rather than raising: a stale name in an IDE's
+    env block must not stop the server from starting.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    if raw.lower() == "all":
+        return list(CLUSTER_REGISTRY)
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return [n for n in names if n in CLUSTER_REGISTRY]
+
+
+def _preload_clusters() -> None:
+    """Equip clusters up front for clients that ignore tools/list_changed.
+
+    The JIT lifecycle assumes the client refreshes its tool list when the
+    server notifies it. Clients that do not never see an equipped tool, so
+    this env var trades a lean context window for working tools.
+    """
+    for domain in resolve_preload(os.environ.get("GUARDIAN_PRELOAD_CLUSTERS")):
+        if domain not in get_active_capabilities():
+            equip_capability(domain)
 
 
 def run_server(
@@ -390,6 +425,12 @@ def run_server(
             authenticates.
         port: Bind port for the HTTP transports.
 
+    Env:
+        GUARDIAN_PRELOAD_CLUSTERS: ``all`` or a comma-separated list of
+            cluster names to equip at startup, for clients that do not act
+            on ``notifications/tools/list_changed`` and so would never see
+            a JIT-equipped tool appear.
+
     Note:
         Equipped capabilities are process-global, not per-connection. Under
         an HTTP transport shared by several clients, one client's
@@ -401,10 +442,13 @@ def run_server(
         mcp.settings.host = host
         mcp.settings.port = port
 
+    _preload_clusters()
+
     logger.info(
         "mcp_server_starting",
         transport=transport,
         bootstrap_tools=4,
         available_clusters=list(CLUSTER_REGISTRY.keys()),
+        preloaded=sorted(get_active_capabilities()),
     )
     mcp.run(transport=transport)  # type: ignore[arg-type]

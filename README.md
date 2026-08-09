@@ -207,7 +207,9 @@ a session picks the new tools up on its next refresh rather than right away.
 Generate the exact block for your install, filled in with your resolved settings:
 
 ```bash
-dev-guardian init --print-mcp-config
+dev-guardian init --print-mcp-config                    # Claude Code / Claude Desktop
+dev-guardian init --print-mcp-config --client vscode    # .vscode/mcp.json
+dev-guardian init --print-mcp-config --client codex     # ~/.codex/config.toml
 ```
 
 ```json
@@ -222,8 +224,28 @@ dev-guardian init --print-mcp-config
 }
 ```
 
+`--client` takes `claude`, `cursor`, `windsurf`, `antigravity`, `claude-desktop`, `vscode`,
+or `codex`. The shapes are not interchangeable: VS Code keys servers under `servers` and
+Codex reads TOML, while the rest use Claude Desktop's `mcpServers`. The printed comment
+line names the file to paste into, and goes to stderr so you can redirect the block itself.
+
+Guardian runs its own agent pipeline inside the server process against `GUARDIAN_PROVIDER`,
+so `evaluate_pr_diff` behaves the same in every client — it does not borrow the editor's
+model and does not need the editor to spawn sub-agents. It does need its own key, or
+`GUARDIAN_PROVIDER=ollama` for a fully local run.
+
 Run `dev-guardian init` and index at least one repository before you point an IDE at the
-server. `serve` checks the backing services and exits if they are down.
+server. `serve` checks the backing services and exits if they are down. Docker is only
+needed for that step: nothing auto-starts a container from inside an MCP session, where
+there is no terminal to prompt on.
+
+### Clients that ignore `tools/list_changed`
+
+JIT equipping assumes your client refreshes its tool list when the server notifies it. If
+yours does not, equipped tools never become visible. Set `GUARDIAN_PRELOAD_CLUSTERS=all` in
+the server's `env` block to register every cluster at startup instead — a fuller context
+window in exchange for tools that are there from the first message. A comma-separated list
+(`pr_governance,codebase_intelligence`) preloads only those.
 
 ### Serving over HTTP
 
@@ -249,6 +271,12 @@ recording either way.
 pip install "agentic-dev-guardian[tracing]"
 export LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
 ```
+
+`GUARDIAN_LANGFUSE_*` / `LANGFUSE_*` in `backend/.env` also work — `core/tracing.py`
+copies whatever `GuardianSettings` resolved into `os.environ` (real exported env vars
+still win) before Langfuse's own SDK reads it. Langfuse ignores `GuardianSettings`
+entirely and reads `os.environ` directly, so without that copy step a `.env`-only
+setup silently no-ops every trace with an auth error nobody sees.
 
 ---
 
