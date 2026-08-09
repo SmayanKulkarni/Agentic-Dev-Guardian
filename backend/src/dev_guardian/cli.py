@@ -71,16 +71,23 @@ def _mcp_config_json() -> str:
     from dev_guardian.core.config import get_settings
 
     s = get_settings()
+    provider = os.environ.get("GUARDIAN_PROVIDER", "groq")
+    key_var = {
+        "groq": "GUARDIAN_GROQ_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+    }.get(provider)
     env = {
-        "GUARDIAN_PROVIDER": os.environ.get("GUARDIAN_PROVIDER", "groq"),
-        # Never echo the resolved key: this output gets pasted into chats,
-        # issues and screen shares. The user fills it in at paste time.
-        "GUARDIAN_GROQ_API_KEY": "<your-api-key>",
+        "GUARDIAN_PROVIDER": provider,
         "GUARDIAN_MEMGRAPH_HOST": s.memgraph_host,
         "GUARDIAN_MEMGRAPH_PORT": str(s.memgraph_port),
         "GUARDIAN_QDRANT_HOST": s.qdrant_host,
         "GUARDIAN_QDRANT_PORT": str(s.qdrant_port),
     }
+    if key_var:
+        # Never echo the resolved key: this output gets pasted into chats,
+        # issues and screen shares. The user fills it in at paste time.
+        env[key_var] = "<your-api-key>"
     model = os.environ.get("GUARDIAN_MODEL")
     if model:
         env["GUARDIAN_MODEL"] = model

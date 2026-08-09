@@ -36,3 +36,23 @@ htmlcov/
 # Tool output
 graphify-out/
 .code-review-graph/
+
+# Agent scratch / internal working notes
+.scratch/
+.agents/
+.windsurf/
+.claude/settings.local.json
+
+# Dev scratch artifacts (diffs, patches, ad-hoc debug scripts/logs)
+backend/*.diff
+backend/*.patch
+backend/*.log
+backend/evaluate_debug.log
+backend/sentry_error.txt
+backend/sktime_incident.txt
+backend/guardian_audit.md
+backend/guardian_blueprint.md
+backend/guardian_hotfix.md
+backend/sktime_wiki.md
+backend/test_groq.py
+backend/test_mcp_client.py

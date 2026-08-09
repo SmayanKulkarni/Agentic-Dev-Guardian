@@ -39,7 +39,7 @@ for you; point it at your own instances instead if you already run them.
 pip install agentic-dev-guardian          # or: uvx --from agentic-dev-guardian dev-guardian --help
 
 export GUARDIAN_PROVIDER=groq             # groq | anthropic | openai | ollama | local | huggingface
-export GUARDIAN_GROQ_API_KEY=...          # the key for whichever provider you picked
+export GUARDIAN_GROQ_API_KEY=...          # groq key; anthropic/openai use ANTHROPIC_API_KEY / OPENAI_API_KEY instead
 
 dev-guardian init                         # starts/health-checks Memgraph + Qdrant, reuses what is up
 dev-guardian index /path/to/your/repo     # add --skip-vectors on RAM-constrained machines
