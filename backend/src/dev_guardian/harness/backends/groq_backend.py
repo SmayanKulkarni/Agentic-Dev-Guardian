@@ -26,7 +26,10 @@ class GroqBackend:
     """Groq LLM backend implementing the LLMBackend protocol."""
 
     name: str = "groq"
-    default_model: str = "llama-3.3-70b-versatile"
+    # llama-3.3-70b-versatile does not support response_format=json_schema;
+    # only the gpt-oss family does (https://console.groq.com/docs/structured-outputs).
+    # Every skill call goes through structured output, so the default must be one of those.
+    default_model: str = "openai/gpt-oss-120b"
     context_window: int = 128_000
 
     def __init__(self) -> None:

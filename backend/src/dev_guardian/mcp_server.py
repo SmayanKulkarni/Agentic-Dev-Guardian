@@ -49,8 +49,11 @@ from dev_guardian.capability_clusters.core import (
 )
 from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
+from dev_guardian.skills import register_all_skills
 
 logger = get_logger(__name__)
+
+register_all_skills()
 
 # ── Initialize the MCP Server ──────────────────────────────────────
 mcp = FastMCP("Agentic Dev Guardian")

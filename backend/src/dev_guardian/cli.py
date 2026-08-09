@@ -17,6 +17,9 @@ from rich.console import Console
 
 from dev_guardian import __version__
 from dev_guardian.core.logging import get_logger
+from dev_guardian.skills import register_all_skills
+
+register_all_skills()
 
 app = typer.Typer(
     name="dev-guardian",
@@ -557,7 +560,10 @@ def audit(
             rt_reason = str(exc)[:200]
 
         # Severity badge
-        if rt_verdict == "fail" or gk_verdict == "fail":
+        if rt_verdict == "error" or gk_verdict == "error":
+            badge = "⚫ ERROR"
+            sev = "error"
+        elif rt_verdict == "fail" or gk_verdict == "fail":
             badge = "🔴 HIGH"
             sev = "high"
         elif rt_verdict == "warn" or gk_verdict == "warn":
@@ -567,7 +573,7 @@ def audit(
             badge = "🟢 PASS"
             sev = "pass"
 
-        icon = {"high": "❌", "medium": "⚠️ ", "pass": "✅"}.get(sev, "?")
+        icon = {"high": "❌", "medium": "⚠️ ", "pass": "✅", "error": "💥"}.get(sev, "?")
         _echo(f"    {icon} {badge}  Gatekeeper={gk_verdict}  RedTeam={rt_verdict}")
 
         findings.append({
@@ -589,6 +595,8 @@ def audit(
     # ── Step 3: Write report ──────────────────────────────────────
     high = sum(1 for f in findings if f["severity"] == "high")
     medium = sum(1 for f in findings if f["severity"] == "medium")
+    errored = sum(1 for f in findings if f["severity"] == "error")
+    passed = len(findings) - high - medium - errored
 
     report_sections.insert(
         1,
@@ -596,17 +604,18 @@ def audit(
         f"| Severity | Count |\n|----------|-------|\n"
         f"| 🔴 High   | {high} |\n"
         f"| 🟡 Medium | {medium} |\n"
-        f"| 🟢 Pass   | {len(findings) - high - medium} |\n\n---\n",
+        f"| ⚫ Error  | {errored} |\n"
+        f"| 🟢 Pass   | {passed} |\n\n---\n",
     )
 
     output.write_text("\n".join(report_sections), encoding="utf-8")
     _echo("")
     _echo(
         f"[bold cyan]✅ Audit complete: {high} high, {medium} medium, "
-        f"{len(findings) - high - medium} pass[/bold cyan]"
+        f"{errored} errored, {passed} pass[/bold cyan]"
     )
     _echo(f"[bold green]📄 Report written to:[/bold green] {output}")
-    logger.info("audit_complete", high=high, medium=medium)
+    logger.info("audit_complete", high=high, medium=medium, errored=errored)
 
 
 @app.command()
