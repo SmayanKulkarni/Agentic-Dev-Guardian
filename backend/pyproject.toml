@@ -13,6 +13,20 @@ license-files = ["LICENSE"]  # symlink to the repo-root LICENSE
 authors = [
     {name = "Smayan Kulkarni"}
 ]
+keywords = ["graphrag", "llm", "agents", "code-review", "static-analysis", "mcp", "langgraph"]
+# No "License :: OSI Approved :: ..." classifier: PEP 639 rejects it alongside the
+# license/license-files fields above.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 dependencies = [
     # CLI Framework
@@ -41,6 +55,12 @@ dependencies = [
     # Harness: prompt YAML loading
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/SmayanKulkarni/Agentic-Dev-Guardian"
+Repository = "https://github.com/SmayanKulkarni/Agentic-Dev-Guardian"
+Issues = "https://github.com/SmayanKulkarni/Agentic-Dev-Guardian/issues"
+Changelog = "https://github.com/SmayanKulkarni/Agentic-Dev-Guardian/releases"
 
 [project.optional-dependencies]
 dev = [

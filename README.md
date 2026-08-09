@@ -1,6 +1,61 @@
-# Agentic Dev Guardian 🛡️
+# Agentic Dev Guardian
+
+[![PyPI](https://img.shields.io/pypi/v/agentic-dev-guardian.svg)](https://pypi.org/project/agentic-dev-guardian/)
+[![Python](https://img.shields.io/pypi/pyversions/agentic-dev-guardian.svg)](https://pypi.org/project/agentic-dev-guardian/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/SmayanKulkarni/Agentic-Dev-Guardian/blob/main/LICENSE)
 
 > A GraphRAG-powered multi-agent system that deeply understands your codebase and autonomously guards it — generating architectural docs, gatekeeping pull requests, red-teaming code, and self-healing technical debt.
+
+**Install:** `pip install agentic-dev-guardian` · **Command:** `dev-guardian` · [Source](https://github.com/SmayanKulkarni/Agentic-Dev-Guardian) · [Issues](https://github.com/SmayanKulkarni/Agentic-Dev-Guardian/issues)
+
+---
+
+## Why
+
+An LLM reviewing a diff in isolation sees the diff. It does not see the twelve callers of
+the function you changed, the subclass that overrides it, or the module that imports it for
+a side effect. Guardian indexes your repository into a real call/import/inheritance graph
+first, then hands agents the *retrieved* neighbourhood of every change — so review verdicts,
+blast-radius audits, incident triage, and refactor plans are grounded in what your code
+actually references rather than what fits in a context window.
+
+Use it when you want:
+
+- **A PR gate that knows the blast radius.** `evaluate` runs a diff through a Mixture-of-Agents pipeline and returns `approve / remediate / reject` with the impacted call graph attached.
+- **Proactive hardening, not just reactive review.** `audit` finds the highest-fan-out functions in the repo and red-teams them before anyone files a PR.
+- **On-call help that reads the graph.** `incident --trace` turns a raw stack trace into a hotfix blueprint using the call graph around the failing frame.
+- **Mechanical migrations planned for you.** `refactor` translates "migrate Pydantic v1 to v2" into Cypher, finds every affected entity, and emits a validated blueprint.
+- **Docs that track the code.** `docs` narrates the live graph into a `GUARDIAN_WIKI.md`.
+- **All of the above inside your editor.** `serve` exposes the same tools over MCP to Cursor, Claude Desktop, or Windsurf.
+
+---
+
+## Quickstart
+
+**Prerequisites:** Python 3.11+, and Docker (only if you want Guardian to run Memgraph and
+Qdrant for you — point it at your own instances instead if you prefer).
+
+```bash
+pip install agentic-dev-guardian          # or: uvx --from agentic-dev-guardian dev-guardian --help
+
+export GUARDIAN_PROVIDER=groq             # groq | anthropic | openai | ollama | local | huggingface
+export GUARDIAN_GROQ_API_KEY=...          # the key for whichever provider you picked
+
+dev-guardian init                         # starts/health-checks Memgraph + Qdrant, reuses what is up
+dev-guardian index /path/to/your/repo     # add --skip-vectors on RAM-constrained machines
+dev-guardian evaluate my_feature.diff --repo /path/to/your/repo
+```
+
+Extras: `pip install "agentic-dev-guardian[anthropic]"` (or `openai`, `viz`, `tracing`, `all`).
+
+From a checkout instead:
+
+```bash
+git clone https://github.com/SmayanKulkarni/Agentic-Dev-Guardian.git
+cd Agentic-Dev-Guardian/backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
 
 ---
 
@@ -13,23 +68,24 @@ The Guardian works in two stages:
 
 ---
 
-## 🧠 What the Agents Can Do
+## Commands
 
 | CLI Command | What It Does |
 |---|---|
 | `dev-guardian index <path>` | Parse & ingest a codebase into Memgraph + Qdrant (streaming, memory-safe) |
 | `dev-guardian evaluate <diff>` | Run a PR diff through the MoA Gatekeeper + Red Team pipeline |
 | `dev-guardian audit <path>` | Find the highest blast-radius functions and red-team them proactively |
-| `dev-guardian incident --trace "..."` | Triage a production stack trace → generate a targeted hotfix blueprint |
+| `dev-guardian incident --trace "..."` | Triage a production stack trace into a targeted hotfix blueprint |
 | `dev-guardian refactor --pattern "..."` | Generate a self-healing migration blueprint from a pattern or natural language |
-| `dev-guardian docs <path>` | Generate a live `GUARDIAN_WIKI.md` from the AST graph via Groq |
+| `dev-guardian docs <path>` | Generate a live `GUARDIAN_WIKI.md` from the AST graph |
 | `dev-guardian serve` | Launch the MCP Server for IDE integration (Cursor, Claude Desktop, Windsurf) |
 | `dev-guardian init` | Start and health-check Memgraph + Qdrant; `--print-mcp-config` emits your IDE's JSON block |
 | `dev-guardian down` | Stop the containers `init` started (never touches services you run yourself) |
+| `dev-guardian version` | Print the installed version |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 | Layer | Technology |
 |---|---|
@@ -38,13 +94,13 @@ The Guardian works in two stages:
 | **Semantic Index** | Qdrant + FastEmbed (ONNX, `--skip-vectors` for RAM-constrained systems) |
 | **Hybrid Retrieval** | `HybridRetriever` — fuses Cypher graph results + Qdrant vector search |
 | **Agent Orchestration** | LangGraph typed state graphs (`GuardianState`, `SREState`, `RefactorState`) |
-| **LLM Engine** | Groq (`llama-3.3-70b-versatile`) for reasoning, code generation, and narration |
+| **LLM Engine** | Groq (`llama-3.3-70b-versatile`) by default; Anthropic, OpenAI, Ollama, or any OpenAI-compatible endpoint |
 | **LLMOps & Tracing** | Local SQLite call log always; Langfuse optionally (`[tracing]` extra) |
-| **IDE Integration** | MCP Server (`stdio` transport) — exposes Guardian tools to any MCP-compatible IDE |
+| **IDE Integration** | MCP Server (`stdio` or streamable-HTTP transport) |
 
 ---
 
-## 📤 Data Handling
+## Data Handling
 
 Guardian sends your source code to a third-party LLM provider. Be clear about this before pointing it at anything sensitive.
 
@@ -58,7 +114,7 @@ Guardian sends your source code to a third-party LLM provider. Be clear about th
 
 ---
 
-## 🤖 Agent Pipelines
+## Agent Pipelines
 
 ### PR Evaluation (`evaluate`)
 `Gatekeeper → Red Team → Remediation → Decision`
@@ -83,90 +139,28 @@ Accepts registered patterns (e.g. `migrate-pydantic-v1-to-v2`) or free-form Engl
 ### Docs Generation (`docs`)
 `StructureExplainer → ADRGenerator → WikiBuilder`
 
-Queries IMPORTS, CALLS, and INHERITS_FROM edges from the live Memgraph graph and uses Groq to narrate them into human-readable section summaries, then assembles a full `GUARDIAN_WIKI.md`.
+Queries IMPORTS, CALLS, and INHERITS_FROM edges from the live Memgraph graph and narrates them into human-readable section summaries, then assembles a full `GUARDIAN_WIKI.md`.
 
 ---
 
-## 🗂️ Repository Map
+## Providers & Configuration
 
-```
-backend/src/dev_guardian/
-├── core/               # Config (Pydantic Settings) + structured logging (structlog)
-├── parsers/            # Tree-sitter AST parser + ASTNode/ASTEdge data models
-├── graphrag/           # Memgraph client, Qdrant client, vector manager, hybrid retriever
-├── agents/             # All LangGraph nodes + typed state definitions + graph builders
-├── capability_clusters/ # High-level tool groupings (codebase_intelligence, pr_governance, etc.)
-├── docs/               # structure_explainer.py, adr_generator.py, wiki_builder.py
-├── cli.py              # Typer CLI entry point (`guardian` command)
-└── mcp_server.py       # MCP Server with JIT tool loading for IDE integration
-
-.agents/
-├── memory/             # Architecture blueprint, context, package capabilities
-├── skills/             # Specialized agent personas (graphrag_engineer, red_team_tester, etc.)
-└── logs/               # Implementation logs and audit records
-```
-
----
-
-## ⚙️ Getting Started
-
-**Prerequisites:** Python 3.11+, and Docker (only if you want Guardian to run Memgraph and
-Qdrant for you — point it at your own instances instead if you prefer).
-
-```bash
-pip install agentic-dev-guardian      # or: uvx --from agentic-dev-guardian dev-guardian --help
-
-export GUARDIAN_PROVIDER=groq         # groq | anthropic | openai | ollama | local | huggingface
-export GUARDIAN_GROQ_API_KEY=...      # the key for whichever provider you picked
-
-dev-guardian init                     # starts/health-checks Memgraph + Qdrant, reuses what is up
-```
-
-From a checkout instead:
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-**Index a codebase:**
-```bash
-dev-guardian index /path/to/your/repo
-# Memory-constrained? Skip Qdrant ONNX embeddings:
-dev-guardian index /path/to/your/repo --skip-vectors
-```
-
-**Evaluate a PR:**
-```bash
-dev-guardian evaluate my_feature.diff --repo /path/to/your/repo
-```
-
-**Run the MCP Server (for Cursor / Claude Desktop):**
-```bash
-dev-guardian serve
-```
-
-### Providers
-
-Selection is explicit — Guardian never guesses from whichever key happens to be in your
-environment. `GUARDIAN_PROVIDER` picks the backend, `GUARDIAN_MODEL` overrides that
+Provider selection is explicit — Guardian never guesses from whichever key happens to be in
+your environment. `GUARDIAN_PROVIDER` picks the backend, `GUARDIAN_MODEL` overrides that
 backend's default model, and a missing key for the selected provider is a hard failure
 rather than a silent fallback.
 
 | Provider | Key | Notes |
 |----------|-----|-------|
 | `groq` (default) | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
-| `anthropic` | `ANTHROPIC_API_KEY` | structured output via forced tool-use |
-| `openai` | `OPENAI_API_KEY` | cloud only |
+| `anthropic` | `ANTHROPIC_API_KEY` | structured output via forced tool-use; needs `[anthropic]` extra |
+| `openai` | `OPENAI_API_KEY` | cloud only; needs `[openai]` extra |
 | `ollama` | — | `http://localhost:11434/v1`, defaults to `qwen3:8b` |
 | `local` | — | any OpenAI-compatible engine; set `GUARDIAN_LOCAL_BASE_URL` |
 | `huggingface` | `HF_TOKEN` | Inference Providers router |
 
 For a local or self-hosted model, set `GUARDIAN_CONTEXT_TOKENS` to that model's real context
 size (and `GUARDIAN_TPM` if your endpoint is metered) — Guardian cannot infer either.
-
-### Configuration
 
 Environment variables win over everything; dotenv files are convenience only, read in
 ascending priority: `~/.config/guardian/.env`, then `backend/.env`, then `./.env`. Every
@@ -175,7 +169,7 @@ no configuration of its own.
 
 ---
 
-## 🔌 MCP Integration
+## MCP Integration
 
 The `dev-guardian serve` command starts a stdio MCP server. To keep your IDE's context
 window lean it exposes only 4 bootstrap tools at startup:
@@ -234,3 +228,32 @@ Guardian runs normally; the local SQLite call log in `harness/logger.py` is unaf
 pip install "agentic-dev-guardian[tracing]"
 export LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=...
 ```
+
+---
+
+## Repository Map
+
+```
+backend/src/dev_guardian/
+├── core/                # Config (Pydantic Settings) + structured logging (structlog)
+├── parsers/             # Tree-sitter AST parser + ASTNode/ASTEdge data models
+├── graphrag/            # Memgraph client, Qdrant client, vector manager, hybrid retriever
+├── agents/              # All LangGraph nodes + typed state definitions + graph builders
+├── capability_clusters/ # High-level tool groupings (codebase_intelligence, pr_governance, ...)
+├── harness/             # Prompt YAML loading + local SQLite LLM call log
+├── prompts/             # Versioned prompt templates
+├── skills/              # Specialized agent personas (graphrag_engineer, red_team_tester, ...)
+├── docs/                # structure_explainer.py, adr_generator.py, wiki_builder.py
+├── cli.py               # Typer CLI entry point (`dev-guardian` command)
+└── mcp_server.py        # MCP Server with JIT tool loading for IDE integration
+```
+
+Also in the repo: `frontend/` (dashboard UI), `evaluation/` (benchmark datasets + scripts),
+`infrastructure/` (Memgraph/Qdrant compose), `.agents/` (memory, skills, logs). None of
+these ship in the PyPI wheel — the package is `backend/src/dev_guardian` only.
+
+---
+
+## License
+
+MIT — see [LICENSE](https://github.com/SmayanKulkarni/Agentic-Dev-Guardian/blob/main/LICENSE).
