@@ -211,7 +211,11 @@ def index(
             )
             skip_vectors = True
 
-    parser = ASTParser(language=language)
+    try:
+        parser = ASTParser(language=language)
+    except ValueError as exc:
+        _echo(f"[red]✗ {exc}[/red]", err=True)
+        raise typer.Exit(code=1) from exc
 
     # ── Discover files first (cheap — just paths) ──────────────
     pattern = "*.py" if language == "python" else f"*.{language}"
