@@ -13,10 +13,9 @@ No LLM is used here — this is pure graph mathematics.
 
 from __future__ import annotations
 
-from langfuse import observe
-
 from dev_guardian.agents.state import RefactorState
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
 logger = get_logger(__name__)

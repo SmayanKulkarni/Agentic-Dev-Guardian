@@ -1,0 +1,25 @@
+--- a/sktime/utils/validation/forecasting.py
++++ b/sktime/utils/validation/forecasting.py
+@@ -85,10 +85,6 @@ def check_fh(fh):
+     if isinstance(fh, ForecastingHorizon):
+         return fh
+ 
+-    # Validate type
+-    if not isinstance(fh, (list, np.ndarray, pd.Index, int)):
+-        raise TypeError(f"Expected ForecastingHorizon, list, array or int, got: {type(fh)}")
+-
+     # Convert int to list
+     if isinstance(fh, int):
+         fh = [fh]
++    fh = ForecastingHorizon(fh, is_relative=True)
+     return fh
+--- a/sktime/forecasting/base/_base.py
++++ b/sktime/forecasting/base/_base.py
+@@ -305,7 +305,11 @@ def predict(self, fh=None, X=None):
+     def predict(self, fh=None, X=None):
+         """Make predictions for fh steps ahead."""
+-        fh = check_fh(fh)
++        fh = check_fh(fh) if fh is not None else self.fh
++        if fh is None:
++            raise ValueError("No forecasting horizon supplied to predict().")
+         return self._predict(fh=fh, X=X)

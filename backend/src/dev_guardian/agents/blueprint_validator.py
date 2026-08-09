@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import re
 
-from langfuse import observe
-
 from dev_guardian.agents.state import RefactorState
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.tracing import observe
 from dev_guardian.graphrag.memgraph_client import MemgraphClient
 
 logger = get_logger(__name__)
@@ -44,7 +43,6 @@ def blueprint_validator_node(state: RefactorState) -> dict:
     """
     blueprint = state.get("blueprint_md", "")
     blast_radius = state.get("blast_radius", [])
-    pattern = state.get("pattern", "")
 
     if not blueprint or not blast_radius:
         return {
@@ -58,9 +56,6 @@ def blueprint_validator_node(state: RefactorState) -> dict:
     # ── Build ground-truth set from Memgraph blast radius ─────
     known_names: set[str] = {
         row.get("name", "") for row in blast_radius if row.get("name")
-    }
-    known_files: set[str] = {
-        row.get("file_path", "") for row in blast_radius if row.get("file_path")
     }
 
     # ── Cross-reference: check for unrecognised entity mentions

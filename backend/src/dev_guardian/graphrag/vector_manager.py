@@ -9,6 +9,7 @@ on codebase size, and recommends 'global' or 'lazy' embedding strategies.
 from pathlib import Path
 
 from dev_guardian.core.logging import get_logger
+from dev_guardian.parsers.ast_parser import ASTParser
 
 logger = get_logger(__name__)
 
@@ -32,8 +33,12 @@ def predict_embedding_strategy(repo_path: Path, language: str = "python") -> str
     pattern = "*.py" if language == "python" else f"*.{language}"
     
     try:
-        # We only need to count, so we use a generator and sum
-        file_count = sum(1 for _ in repo_path.rglob(pattern))
+        # We only need to count, so we use a generator and sum. Skip the same
+        # dirs ASTParser skips (.venv, node_modules, ...) or vendored deps
+        # inflate the count and trigger a false "large codebase" switch.
+        file_count = sum(
+            1 for f in repo_path.rglob(pattern) if not ASTParser._should_skip(f)
+        )
         
         logger.info(
             "predict_embedding_strategy", 

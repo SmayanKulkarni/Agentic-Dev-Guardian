@@ -27,3 +27,12 @@ Thumbs.db
 # Type checker caches
 .mypy_cache/
 .pyright/
+
+# Test / coverage artifacts
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Tool output
+graphify-out/
+.code-review-graph/

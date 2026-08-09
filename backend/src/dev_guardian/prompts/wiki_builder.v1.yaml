@@ -1,0 +1,18 @@
+id: wiki_builder
+version: 1
+schema: WikiSection
+system: |
+  You are an expert software architect generating a wiki section for a codebase.
+  Use the provided structural data from Memgraph to write a clear, concise,
+  professional markdown section. Do not invent details not present in the data.
+user_template: |
+  ## Section Type
+  {section_type}
+
+  ## Repository
+  {repo_name}
+
+  ## Structural Data
+  {data}
+
+  Write the wiki section now.

@@ -12,7 +12,6 @@ This is the core "GraphRAG" pattern:
   - The merged context gives the LLM both precision and recall.
 """
 
-from typing import Optional
 
 from dev_guardian.core.logging import get_logger
 from dev_guardian.graphrag.memgraph_client import MemgraphClient
@@ -33,8 +32,8 @@ class HybridRetriever:
 
     def __init__(
         self,
-        memgraph: Optional[MemgraphClient] = None,
-        qdrant: Optional[QdrantCodeClient] = None,
+        memgraph: MemgraphClient | None = None,
+        qdrant: QdrantCodeClient | None = None,
     ) -> None:
         """
         Initialize with Memgraph and Qdrant clients.

@@ -12,57 +12,20 @@ Guardian provides the analysis; the IDE LLM writes the actual code.
 
 from __future__ import annotations
 
-from groq import Groq
-from langfuse import observe
-
-from dev_guardian.agents.state import RefactorState
-from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
-from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+from dev_guardian.core.tracing import observe
 
 logger = get_logger(__name__)
 
-SCRIBE_SYSTEM_PROMPT = """\
-You are the Migration Scribe for an autonomous software governance system.
-You have been given a deterministic refactoring plan produced by graph analysis.
-Your task is to generate a precise, developer-facing Markdown migration blueprint.
-
-## Rules
-1. For each file listed, provide EXACT migration instructions — be specific about
-   which function/class to change and exactly what needs to change structurally.
-2. Use the GraphRAG context to make instructions codebase-specific (not generic).
-3. Do NOT write code yourself. Describe WHAT needs to change and WHY.
-   The developer's IDE agent will write the actual code from your instructions.
-4. Include a "Verification" step for each file (e.g. "Run pytest tests/test_auth.py").
-5. Order the batches correctly — leaf nodes (deepest dependencies) first.
-
-## Output Format
-# [Pattern Name] Migration Blueprint
-
-## Summary
-[2-sentence overview]
-
-## Migration Batches
-
-### Batch N: `[file_path]`
-**Entities to migrate:** [count]
-**Entities:**
-- `[entity_name]` ([entity_type]): [Exact instruction]
-
-**Verification:** [What to run to confirm this batch is correct]
-
----
-"""
-
 
 @observe(name="migration_scribe_agent")
-def migration_scribe_node(state: RefactorState) -> dict:
+def migration_scribe_node(state: dict) -> dict:
     """
     LangGraph node: Generate the Markdown migration blueprint.
 
     Reads ``refactor_plan`` from state, fetches supplementary GraphRAG
-    context, invokes Groq to write the blueprint, and writes
-    ``blueprint_md`` back to state.
+    context, invokes SkillRouter to write the blueprint, and writes
+    ``blueprint_md`` back to state. Migrated to use SkillRouter (Phase 1 harness).
 
     Args:
         state: Current LangGraph RefactorState.
@@ -70,18 +33,14 @@ def migration_scribe_node(state: RefactorState) -> dict:
     Returns:
         Partial state update with blueprint_md and messages.
     """
-    settings = get_settings()
-    client = Groq(api_key=settings.groq_api_key)
-
     plan = state.get("refactor_plan", {})
     pattern = state.get("pattern", "")
-    blast_radius = state.get("blast_radius", [])
 
     if not plan.get("batches"):
         return {
             "blueprint_md": (
                 f"# {pattern} Blueprint\n\n"
-                "✅ No entities require migration. Codebase is already compliant."
+                "No entities require migration. Codebase is already compliant."
             ),
             "messages": ["[MigrationScribe] No entities to migrate — skipping blueprint."],
         }
@@ -89,6 +48,7 @@ def migration_scribe_node(state: RefactorState) -> dict:
     # ── Fetch GraphRAG context for the impacted area ───────────
     graphrag_context = ""
     try:
+        from dev_guardian.retrieval.hybrid_retriever import HybridRetriever
         retriever = HybridRetriever()
         result = retriever.retrieve(
             query=f"{pattern} migration {plan.get('description', '')}",
@@ -99,15 +59,7 @@ def migration_scribe_node(state: RefactorState) -> dict:
     except Exception as exc:
         logger.warning("scribe_graphrag_fetch_failed", error=str(exc))
 
-    # ── Build the user message ─────────────────────────────────
     plan_summary = _summarise_plan(plan)
-
-    user_message = (
-        f"## Migration Pattern\n{pattern}\n\n"
-        f"## Pattern Description\n{plan.get('description', '')}\n\n"
-        f"## Refactoring Plan (from Memgraph graph analysis)\n{plan_summary}\n\n"
-        f"## GraphRAG Codebase Context\n{graphrag_context}"
-    )
 
     logger.info(
         "migration_scribe_invoke",
@@ -116,23 +68,21 @@ def migration_scribe_node(state: RefactorState) -> dict:
         batches=plan.get("batch_count", 0),
     )
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": SCRIBE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0.2,
-        max_tokens=4096,
+    from dev_guardian.harness.skill_router import run_skill
+    result_skill = run_skill(
+        "migration_scribe",
+        {
+            "pattern": pattern,
+            "description": plan.get("description", ""),
+            "plan_summary": plan_summary,
+            "context": graphrag_context,
+        },
     )
+    from dev_guardian.harness.schema import MigrationBlueprint
+    parsed: MigrationBlueprint = result_skill.parsed  # type: ignore[assignment]
+    blueprint = f"## Summary\n{parsed.summary}\n\n{parsed.batches_md}"
 
-    blueprint = response.choices[0].message.content or ""
-
-    logger.info(
-        "migration_scribe_complete",
-        blueprint_length=len(blueprint),
-    )
-
+    logger.info("migration_scribe_complete", blueprint_length=len(blueprint))
     return {
         "blueprint_md": blueprint,
         "messages": [

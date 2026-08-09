@@ -13,7 +13,6 @@ leaves the machine during vectorization.
 """
 
 import hashlib
-from typing import Optional
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
@@ -49,9 +48,9 @@ class QdrantCodeClient:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        embedding_model: Optional[str] = None,
+        host: str | None = None,
+        port: int | None = None,
+        embedding_model: str | None = None,
     ) -> None:
         """
         Initialize Qdrant client and local embedding model.
@@ -160,7 +159,7 @@ class QdrantCodeClient:
             embeddings = list(self._embedder.embed(texts))
 
             points = []
-            for node, vector in zip(batch, embeddings):
+            for node, vector in zip(batch, embeddings, strict=False):
                 point_id = self._stable_point_id(node)
                 points.append(
                     PointStruct(
@@ -200,7 +199,7 @@ class QdrantCodeClient:
         query: str,
         user_clearance: int = 0,
         top_k: int = 5,
-        owner_team: Optional[str] = None,
+        owner_team: str | None = None,
     ) -> list[dict]:
         """
         Search for semantically similar code entities.

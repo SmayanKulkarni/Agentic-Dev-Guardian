@@ -10,13 +10,12 @@ Nodes = Functions, Classes, Variables
 Edges = CALLS, INHERITS_FROM, IMPORTS
 """
 
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class NodeType(str, Enum):
+class NodeType(StrEnum):
     """Types of AST entities that become graph Nodes."""
 
     FUNCTION = "function"
@@ -26,7 +25,7 @@ class NodeType(str, Enum):
     MODULE = "module"
 
 
-class EdgeType(str, Enum):
+class EdgeType(StrEnum):
     """Types of structural relationships that become graph Edges."""
 
     CALLS = "calls"
@@ -47,8 +46,13 @@ class ASTNode(BaseModel):
         start_line: The line number where this entity's definition begins.
         end_line: The line number where this entity's definition ends.
         docstring: The entity's docstring, if present.
-        owner_team: ABAC metadata tag for Fine-Grained Access Control (Phase 2).
-        clearance_level: ABAC security clearance (default 0 = public).
+        owner_team: Ownership tag, usable as a retrieval filter.
+        clearance_level: Retrieval visibility tier (default 0). Graph queries
+            filter on ``clearance_level <= $cl`` to scope how much of the graph
+            a run pulls back. This is NOT a security control: it decides what
+            is retrieved, not what is sent to the LLM provider. Retrieved
+            content, and the PR diff (which is never filtered at all), go to
+            the configured provider verbatim.
     """
 
     name: str
@@ -56,9 +60,11 @@ class ASTNode(BaseModel):
     file_path: str
     start_line: int
     end_line: int
-    docstring: Optional[str] = None
-    owner_team: str = Field(default="unassigned", description="ABAC metadata tag")
-    clearance_level: int = Field(default=0, description="ABAC clearance level")
+    docstring: str | None = None
+    owner_team: str = Field(default="unassigned", description="Ownership tag")
+    clearance_level: int = Field(
+        default=0, description="Retrieval visibility tier — not a security boundary"
+    )
 
 
 class ASTEdge(BaseModel):

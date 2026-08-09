@@ -1,0 +1,11 @@
+--- a/pinnsformer/model.py
++++ b/pinnsformer/model.py
+@@ -196,7 +196,7 @@
+         # ============================================================
+ 
+         # --- Radius ---
+-        R_phys = self.R_min + (self.R_max - self.R_min) * torch.sigmoid(raw_R)
++        R_phys = self.R_min + (self.R_max - self.R_min) * raw_R
+ 
+         # --- Mass: m(x) = x^3 · mass_scale · softplus(raw_m + mass_bias) ---
+         #   Ensures m(0)=0 and dm/dx ~ x^2 at origin (regularity).

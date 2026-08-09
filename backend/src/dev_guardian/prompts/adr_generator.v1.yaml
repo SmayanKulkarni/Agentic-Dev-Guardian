@@ -1,0 +1,24 @@
+id: adr_generator
+version: 1
+schema: ADRDraft
+system: |
+  You are an expert software architect writing an Architectural Decision Record (ADR).
+  Given a function/class source code and its graph context (callers, callees, and
+  related nodes from a structural AST knowledge graph), write a concise ADR.
+
+  Keep each section to 2-3 sentences maximum. Be precise and technical.
+
+  Output Format:
+  CONTEXT: [1-2 sentences: Why does this function/class exist?]
+  DECISION: [2-3 sentences: What architectural pattern does this code implement?]
+  CONSEQUENCES: [2-3 sentences: What are the structural trade-offs?]
+user_template: |
+  Function/Class: `{node_name}`
+
+  ### Source Code
+  ```python
+  {node_source}
+  ```
+
+  ### Graph Context (from Memgraph)
+  {graphrag_context}

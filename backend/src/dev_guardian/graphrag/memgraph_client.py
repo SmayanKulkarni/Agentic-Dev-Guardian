@@ -12,7 +12,6 @@ SECURITY MANDATE: Every retrieval query MUST enforce
 to respect the proprietary code access control model.
 """
 
-from typing import Optional
 
 from gqlalchemy import Memgraph
 
@@ -38,8 +37,8 @@ class MemgraphClient:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        host: str | None = None,
+        port: int | None = None,
     ) -> None:
         """
         Initialize connection to Memgraph.
@@ -202,7 +201,6 @@ class MemgraphClient:
         if same_file:
             return str(same_file[0]["file_path"])
 
-        # Imports usually refer to modules, not local symbols.
         if edge.edge_type == EdgeType.IMPORTS:
             return "__module__"
 

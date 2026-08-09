@@ -1,21 +1,22 @@
 [build-system]
-requires = ["setuptools>=70.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
 
 [project]
 name = "agentic-dev-guardian"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI Developer Governance & Codebase Evaluator — A GraphRAG-powered multi-agent system featuring autonomous code evaluation, red-team testing, and dynamic LLM-narrated architectural documentation."
-readme = "README.md"
+readme = "../README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+license-files = ["LICENSE"]  # symlink to the repo-root LICENSE
 authors = [
     {name = "Smayan Kulkarni"}
 ]
 
 dependencies = [
     # CLI Framework
-    "typer[all]>=0.12.0",
+    "typer>=0.12.0",  # no `[all]`: typer dropped that extra, pip warns on install
     # Data Validation & Settings
     "pydantic>=2.6.0",
     "pydantic-settings>=2.0.0",
@@ -28,8 +29,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # LLM Provider (Groq)
     "groq>=0.9.0",
-    # LLMOps Governance
-    "langfuse>=2.40.0",
     # Phase 2: Graph & Vector Databases
     "gqlalchemy>=1.6.0",
     "qdrant-client>=1.9.0",
@@ -37,34 +36,65 @@ dependencies = [
     # Phase 3: Agent Orchestration
     "langgraph>=0.2.0",
     # Phase 4: MCP Server Integration
-    "mcp[cli]>=1.0.0",
+    # mcp 2.0 removed mcp.server.fastmcp (moved to the standalone `fastmcp` package)
+    "mcp[cli]>=1.0.0,<2",
+    # Harness: prompt YAML loading
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
-    "black>=24.0.0",
-    "flake8>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.5.0",
     "mypy>=1.8.0",
+    "hatch-vcs>=0.4",
 ]
+viz = [
+    "pyvis>=0.3",
+    "matplotlib>=3.8",
+    "radon>=6",
+    "networkx>=3.2",
+]
+anthropic = ["anthropic>=0.34"]
+openai = ["openai>=1.40"]
+# LLMOps tracing. Optional: it expects Langfuse cloud credentials, and
+# `core.tracing` degrades @observe to a no-op when it is absent.
+tracing = ["langfuse>=2.40.0"]
+all = ["agentic-dev-guardian[dev,viz,anthropic,openai,tracing]"]
 
 [project.scripts]
-guardian = "dev_guardian.cli:app"
+# `dev-guardian` is the canonical entry point: PyPI already ships an
+# unrelated `guardian` package whose console script has the same name,
+# and last-installed wins silently under pipx (ticket 02/08).
+dev-guardian = "dev_guardian.cli:app"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.version]
+source = "vcs"
+# pyproject.toml lives in backend/, the git repo root is one level up.
+raw-options = { root = ".." }
 
-[tool.black]
+[tool.hatch.build.targets.wheel]
+packages = ["src/dev_guardian"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests requiring live Memgraph/Qdrant (deselect with -m 'not integration')",
+    "llm: marks tests that call real LLM APIs (deselect with -m 'not llm')",
+]
+
+[tool.ruff]
 line-length = 88
-target-version = ["py311"]
+target-version = "py311"
 
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-pythonVersion = "3.11"
-pythonPlatform = "All"
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"
-strict = true
+strict = false
+ignore_missing_imports = true

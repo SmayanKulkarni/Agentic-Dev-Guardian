@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/smayan/Desktop/Agentic/backend/src/dev_guardian/agents/gatekeeper.py", line 73, in gatekeeper_node
+    response = client.chat.completions.create(
+  File "/home/smayan/Desktop/Agentic/backend/.venv/lib/python3.12/site-packages/groq/_client.py", line 88, in create
+    return self._post(path, body=body)
+  File ".venv/lib/python3.12/site-packages/groq/_client.py", line 120, in _post
+    return self._request(method, url, body=body)
+groq.APIConnectionError: Connection refused — is Groq reachable?
