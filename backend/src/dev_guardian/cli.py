@@ -59,13 +59,25 @@ def _require_infra() -> None:
         raise typer.Exit(code=1) from exc
 
 
-def _mcp_config_json() -> str:
-    """The MCP client block for this install, with the resolved settings.
+_MCP_COMMAND = "uvx"
+_MCP_ARGS = ["--from", "agentic-dev-guardian", "dev-guardian", "serve"]
 
-    Guardian writes no config of its own (ticket 06) — the IDE's `env` block
-    is the configuration channel, so `init` just prints what to paste.
-    """
-    import json
+# Where each client reads its MCP config, and under which top-level key. The
+# shapes genuinely differ: VS Code uses `servers`, Codex uses TOML, everyone
+# else settled on Claude Desktop's `mcpServers`.
+MCP_CLIENTS: dict[str, str] = {
+    "claude": "~/.claude.json, or `claude mcp add-json guardian '<block>'`",
+    "cursor": "~/.cursor/mcp.json (or .cursor/mcp.json in the repo)",
+    "windsurf": "~/.codeium/windsurf/mcp_config.json",
+    "antigravity": "~/.antigravity/mcp_config.json",
+    "claude-desktop": "claude_desktop_config.json",
+    "vscode": ".vscode/mcp.json (or the user-level mcp.json)",
+    "codex": "~/.codex/config.toml",
+}
+
+
+def _mcp_env() -> dict[str, str]:
+    """The env block every client shape carries, from the resolved settings."""
     import os
 
     from dev_guardian.core.config import get_settings
@@ -91,21 +103,46 @@ def _mcp_config_json() -> str:
     model = os.environ.get("GUARDIAN_MODEL")
     if model:
         env["GUARDIAN_MODEL"] = model
-    block = {
-        "mcpServers": {
-            "guardian": {
-                "command": "uvx",
-                "args": [
-                    "--from",
-                    "agentic-dev-guardian",
-                    "dev-guardian",
-                    "serve",
-                ],
-                "env": env,
-            }
-        }
-    }
-    return json.dumps(block, indent=2)
+    preload = os.environ.get("GUARDIAN_PRELOAD_CLUSTERS")
+    if preload:
+        env["GUARDIAN_PRELOAD_CLUSTERS"] = preload
+    return env
+
+
+def _mcp_config_json(client: str = "claude") -> str:
+    """The MCP client block for this install, in `client`'s own shape.
+
+    Guardian writes no config of its own (ticket 06) — the IDE's `env` block
+    is the configuration channel, so `init` just prints what to paste.
+
+    Raises:
+        KeyError: `client` is not one of MCP_CLIENTS.
+    """
+    import json
+
+    if client not in MCP_CLIENTS:
+        raise KeyError(client)
+
+    env = _mcp_env()
+
+    if client == "codex":
+        # Codex reads TOML, not JSON. json.dumps doubles as a TOML string
+        # literal writer here: both use "..." with backslash escapes.
+        lines = [
+            "[mcp_servers.guardian]",
+            f"command = {json.dumps(_MCP_COMMAND)}",
+            f"args = [{', '.join(json.dumps(a) for a in _MCP_ARGS)}]",
+            "",
+            "[mcp_servers.guardian.env]",
+            *(f"{k} = {json.dumps(v)}" for k, v in env.items()),
+        ]
+        return "\n".join(lines)
+
+    server = {"command": _MCP_COMMAND, "args": list(_MCP_ARGS), "env": env}
+    if client == "vscode":
+        # VS Code keys servers under `servers` and wants the transport named.
+        return json.dumps({"servers": {"guardian": {"type": "stdio", **server}}}, indent=2)
+    return json.dumps({"mcpServers": {"guardian": server}}, indent=2)
 
 
 @app.command()
@@ -118,9 +155,17 @@ def init(
         bool,
         typer.Option(
             "--print-mcp-config",
-            help="Print the JSON block to paste into your MCP client and exit.",
+            help="Print the config block to paste into your MCP client and exit.",
         ),
     ] = False,
+    client: Annotated[
+        str,
+        typer.Option(
+            "--client",
+            help="Which client --print-mcp-config targets: "
+            + ", ".join(MCP_CLIENTS),
+        ),
+    ] = "claude",
 ) -> None:
     """Start and verify Guardian's backing services (Memgraph + Qdrant).
 
@@ -130,7 +175,17 @@ def init(
     from dev_guardian.core.infra import InfraError, bootstrap
 
     if print_mcp_config:
-        _echo(_mcp_config_json())
+        try:
+            block = _mcp_config_json(client)
+        except KeyError:
+            _echo(
+                f"[bold red]Unknown client '{client}'. Expected one of: "
+                f"{', '.join(MCP_CLIENTS)}.[/bold red]",
+                err=True,
+            )
+            raise typer.Exit(code=2) from None
+        _echo(f"[dim]# paste into {MCP_CLIENTS[client]}[/dim]", err=True)
+        print(block)
         return
 
     try:
@@ -455,174 +510,38 @@ def audit(
     them through the full Gatekeeper + Red Team agent pipeline to find real issues.
 
     Examples:
-        guardian audit /path/to/sktime-main
-        guardian audit /path/to/sktime-main --top 10
+        dev-guardian audit /path/to/sktime-main
+        dev-guardian audit /path/to/sktime-main --top 10
     """
     _require_infra()
 
-    from dev_guardian.agents.gatekeeper import gatekeeper_node
-    from dev_guardian.agents.red_team import redteam_node
-    from dev_guardian.agents.state import GuardianState
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.audit import run_audit
 
-    logger.info("audit_start", path=str(path), top=top)
     _echo(f"[bold green]🔍 Guardian Audit:[/bold green] {path}")
     _echo(f"[cyan]Scanning top {top} highest-risk functions via Memgraph...[/cyan]\n")
 
-    mg = MemgraphClient()
-
-    # ── Step 1: Find the highest blast-radius functions ──────────
-    risky = mg.execute_query(
-        """
-        MATCH (n:ASTNode)-[:CALLS]->(callee:ASTNode)
-        WHERE n.node_type IN ["function", "method"]
-          AND n.clearance_level <= $cl
-          AND n.file_path STARTS WITH $repo_root
-        RETURN n.name as fn, n.file_path as fp,
-               n.start_line as sl, n.end_line as el,
-               count(callee) as calls
-        ORDER BY calls DESC LIMIT $top_n
-        """,
-        {"cl": clearance, "repo_root": str(path), "top_n": top},
+    report = run_audit(
+        path=path,
+        top=top,
+        clearance=clearance,
+        on_progress=lambda line: _echo(f"  {line}"),
     )
 
-    if not risky:
-        _echo("[yellow]No high-complexity functions found in the graph. "
-                   "Have you run `dev-guardian index` on this path?[/yellow]")
+    if not report.findings:
+        _echo(
+            "[yellow]No high-complexity functions found in the graph. "
+            "Have you run `dev-guardian index` on this path?[/yellow]"
+        )
         return
 
-    # ── Step 2: Agents are functions (node-style) ─────────────────
-    report_sections: list[str] = [
-        f"# 🔍 Guardian Audit Report\n\n"
-        f"**Repository**: `{path}`  \n"
-        f"**Scanned**: Top {top} highest blast-radius functions  \n\n"
-        "---\n"
-    ]
-
-    findings: list[dict] = []
-
-    for rank, row in enumerate(risky, 1):
-        fn_name = row["fn"]
-        fp = row["fp"]
-        start_line = row["sl"] or 1
-        end_line = row["el"] or start_line + 30
-        call_count = row["calls"]
-        rel_path = fp.replace(str(path) + "/", "")
-
-        _echo(f"  [{rank}/{top}] Auditing `{fn_name}` ({call_count} calls) in {rel_path}")
-
-        # Read source lines
-        try:
-            src_lines = Path(fp).read_text(encoding="utf-8", errors="replace").splitlines()
-            fn_lines = src_lines[max(0, start_line - 1): end_line]
-            fn_source = "\n".join(fn_lines)
-        except OSError as e:
-            _echo(f"    [yellow]⚠ Could not read {fp}: {e}[/yellow]")
-            continue
-
-        # Wrap as synthetic diff (treat the function as a new addition)
-        synthetic_diff = (
-            f"--- /dev/null\n"
-            f"+++ b/{rel_path}\n"
-            f"@@ -0,0 +{start_line},{len(fn_lines)} @@\n"
-        ) + "\n".join(f"+{line}" for line in fn_lines)
-
-        from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
-        retriever = HybridRetriever()
-        
-        # ── JIT Vector Embedding (Phase 5.7) ──────────
-        retriever.jit_embed_nodes([fn_name], clearance)
-        
-        # Pull GraphRAG context for the audit
-        rag_result = retriever.retrieve(
-            query=fn_source[:500], 
-            user_clearance=clearance, 
-            top_k=5
-        )
-        context = rag_result.get("merged_context", "")
-
-        # Run Gatekeeper
-        state: GuardianState = {
-            "pr_diff": synthetic_diff,
-            "repo_path": str(path),
-            "user_clearance": clearance,
-            "graphrag_context": context,
-            "messages": [],
-        }
-        try:
-            gk_result = gatekeeper_node(state)
-            gk_verdict = gk_result.get("gatekeeper_report", {}).get("verdict", "unknown")
-            gk_reason = gk_result.get("gatekeeper_report", {}).get("reasoning", "")
-        except Exception as exc:
-            gk_verdict = "error"
-            gk_reason = str(exc)[:200]
-
-        # Run Red Team
-        try:
-            rt_result = redteam_node({**state, **gk_result})
-            rt_verdict = rt_result.get("redteam_report", {}).get("verdict", "unknown")
-            rt_reason = rt_result.get("redteam_report", {}).get("reasoning", "")
-        except Exception as exc:
-            rt_verdict = "error"
-            rt_reason = str(exc)[:200]
-
-        # Severity badge
-        if rt_verdict == "error" or gk_verdict == "error":
-            badge = "⚫ ERROR"
-            sev = "error"
-        elif rt_verdict == "fail" or gk_verdict == "fail":
-            badge = "🔴 HIGH"
-            sev = "high"
-        elif rt_verdict == "warn" or gk_verdict == "warn":
-            badge = "🟡 MEDIUM"
-            sev = "medium"
-        else:
-            badge = "🟢 PASS"
-            sev = "pass"
-
-        icon = {"high": "❌", "medium": "⚠️ ", "pass": "✅", "error": "💥"}.get(sev, "?")
-        _echo(f"    {icon} {badge}  Gatekeeper={gk_verdict}  RedTeam={rt_verdict}")
-
-        findings.append({
-            "rank": rank, "name": fn_name, "file": rel_path,
-            "calls": call_count, "severity": sev,
-            "gk_verdict": gk_verdict, "gk_reason": gk_reason,
-            "rt_verdict": rt_verdict, "rt_reason": rt_reason,
-        })
-
-        report_sections.append(
-            f"## {rank}. `{fn_name}` — {badge}\n\n"
-            f"**File**: `{rel_path}` (lines {start_line}–{end_line})  \n"
-            f"**Complexity**: {call_count} function calls  \n\n"
-            f"### Gatekeeper: `{gk_verdict}`\n{gk_reason[:600]}\n\n"
-            f"### Red Team: `{rt_verdict}`\n{rt_reason[:600]}\n\n"
-            "---\n"
-        )
-
-    # ── Step 3: Write report ──────────────────────────────────────
-    high = sum(1 for f in findings if f["severity"] == "high")
-    medium = sum(1 for f in findings if f["severity"] == "medium")
-    errored = sum(1 for f in findings if f["severity"] == "error")
-    passed = len(findings) - high - medium - errored
-
-    report_sections.insert(
-        1,
-        f"## Summary\n\n"
-        f"| Severity | Count |\n|----------|-------|\n"
-        f"| 🔴 High   | {high} |\n"
-        f"| 🟡 Medium | {medium} |\n"
-        f"| ⚫ Error  | {errored} |\n"
-        f"| 🟢 Pass   | {passed} |\n\n---\n",
-    )
-
-    output.write_text("\n".join(report_sections), encoding="utf-8")
+    output.write_text(report.markdown, encoding="utf-8")
+    counts = report.counts
     _echo("")
     _echo(
-        f"[bold cyan]✅ Audit complete: {high} high, {medium} medium, "
-        f"{errored} errored, {passed} pass[/bold cyan]"
+        f"[bold cyan]✅ Audit complete: {counts['high']} high, {counts['medium']} medium, "
+        f"{counts['error']} errored, {counts['pass']} pass[/bold cyan]"
     )
     _echo(f"[bold green]📄 Report written to:[/bold green] {output}")
-    logger.info("audit_complete", high=high, medium=medium, errored=errored)
 
 
 @app.command()
