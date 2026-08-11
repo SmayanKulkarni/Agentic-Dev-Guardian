@@ -1,9 +1,10 @@
 name: Docs Sync Gate
 
 # Ticket 6: gates GUARDIAN_WIKI.md against HEAD without ever generating docs
-# in CI (that needs Memgraph + Qdrant). Regeneration stays local: run
-# `dev-guardian docs .` with an indexed Memgraph, commit the updated wiki,
-# and push — this job only checks the SHA already embedded in the wiki.
+# in CI (docs generation needs an indexed repository). Regeneration stays
+# local: run `dev-guardian index .` then `dev-guardian docs .`, commit the
+# updated wiki, and push — this job only checks the SHA already embedded in
+# the wiki.
 
 on:
   push:
@@ -29,6 +30,6 @@ jobs:
       - name: Check docs staleness
         run: |
           if ! dev-guardian docs-status .; then
-            echo "::error::GUARDIAN_WIKI.md is stale. Run 'dev-guardian docs .' locally with an indexed Memgraph, commit the updated wiki, and push."
+            echo "::error::GUARDIAN_WIKI.md is stale. Run 'dev-guardian index . && dev-guardian docs .' locally, commit the updated wiki, and push."
             exit 1
           fi

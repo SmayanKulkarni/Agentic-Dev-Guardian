@@ -193,7 +193,7 @@ From a machine (or container) that has never seen this repo:
 
 ```bash
 uvx --from agentic-dev-guardian dev-guardian version
-uvx --from agentic-dev-guardian dev-guardian init --print-mcp-config
+uvx --from agentic-dev-guardian dev-guardian mcp-config
 ```
 
 Then paste that block into Cursor / Claude Desktop and confirm the 4 bootstrap tools appear.
@@ -219,11 +219,6 @@ Discovery only; all of these point at the PyPI package you just published.
 about, equip a capability, and note whether the new tools appear immediately or on next refresh.
 Record the answer in `.scratch/ship-guardian/issues/07-mcp-client-integration.md` — it is the last
 open question on the design's core bet.
-
-### Consider a GHCR Docker image
-
-Bundling Guardian + Memgraph + Qdrant removes the Docker-and-Python-env setup entirely. Worth
-building only if `dev-guardian init` friction shows up in real reports — not before.
 
 ### Not doing: hosted SaaS
 

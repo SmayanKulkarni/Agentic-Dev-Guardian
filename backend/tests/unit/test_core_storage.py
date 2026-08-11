@@ -1,8 +1,6 @@
 """Where the embedded stores put their files, and what happens when they are locked."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from dev_guardian.core.storage import (
