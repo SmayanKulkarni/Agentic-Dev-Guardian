@@ -103,7 +103,7 @@ packages = ["src/dev_guardian"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
-    "integration: marks tests requiring live Memgraph/Qdrant (deselect with -m 'not integration')",
+    "integration: marks tests that download the fastembed model or hit live services (deselect with -m 'not integration')",
     "llm: marks tests that call real LLM APIs (deselect with -m 'not llm')",
 ]
 

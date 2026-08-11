@@ -77,7 +77,7 @@ def query_guardian_graph(
     """Search the codebase knowledge graph using hybrid GraphRAG retrieval.
 
     Performs a dual-database query combining Qdrant semantic vector search
-    with Memgraph structural AST graph traversal. Returns merged context
+    with Kùzu structural AST graph traversal. Returns merged context
     showing relevant functions, classes, and their dependency relationships.
 
     Use this tool when you need to understand codebase structure, find
@@ -114,8 +114,8 @@ def query_guardian_graph(
         logger.error("mcp_query_graph_error", error=str(exc))
         return (
             f"[Guardian Error] GraphRAG query failed: {exc}. "
-            "Ensure Memgraph and Qdrant are running and the codebase "
-            "has been indexed with `dev-guardian index <path>`."
+            "Check that this repository has been indexed with "
+            "`dev-guardian index <path>`."
         )
 
 
@@ -258,14 +258,15 @@ def get_guardian_status() -> str:
     current configuration state, including which capability clusters
     are currently active.
     """
+    from dev_guardian.core.storage import guardian_data_dir
+
     settings = get_settings()
     active = sorted(get_active_capabilities())
     status = {
         "version": "0.2.0",
         "groq_configured": bool(settings.groq_api_key),
         "langfuse_configured": bool(settings.langfuse_public_key),
-        "memgraph_endpoint": f"{settings.memgraph_host}:{settings.memgraph_port}",
-        "qdrant_endpoint": f"{settings.qdrant_host}:{settings.qdrant_port}",
+        "data_dir": str(guardian_data_dir()),
         "embedding_model": settings.embedding_model,
         "bootstrap_tools": [
             "query_guardian_graph",

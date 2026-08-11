@@ -60,3 +60,26 @@ def test_unrelated_runtime_error_passes_through(tmp_path):
             raise RuntimeError("something else entirely")
 
     assert not isinstance(exc.value, StoreBusyError)
+
+
+def test_settings_no_longer_carry_service_endpoints():
+    """The embedded stores have no host/port surface to configure."""
+    from dev_guardian.core.config import GuardianSettings
+
+    fields = set(GuardianSettings.model_fields)
+
+    assert not fields & {
+        "memgraph_host",
+        "memgraph_port",
+        "qdrant_host",
+        "qdrant_port",
+    }
+
+
+def test_infra_module_is_gone():
+    import importlib
+
+    import pytest
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("dev_guardian.core.infra")
