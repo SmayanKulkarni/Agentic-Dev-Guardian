@@ -3,12 +3,12 @@ BlueprintValidator Agent — Structural Sanity Checker.
 
 Architecture Blueprint Reference: Phase 5.1 — Self-Healing Codebase Maintenance.
 
-Validates the generated Markdown blueprint against Memgraph to ensure:
+Validates the generated Markdown blueprint against Kùzu to ensure:
 1. All referenced entity names actually exist in the graph.
 2. The file paths mentioned are real indexed paths.
 3. No critical dependency ordering issues are present.
 
-This is a pure Memgraph node — no LLM calls.
+This is a pure Kùzu node — no LLM calls.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import re
 from dev_guardian.agents.state import RefactorState
 from dev_guardian.core.logging import get_logger
 from dev_guardian.core.tracing import observe
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 
 logger = get_logger(__name__)
 
@@ -29,10 +29,10 @@ _BACKTICK_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]*)`")
 @observe(name="blueprint_validator_agent")
 def blueprint_validator_node(state: RefactorState) -> dict:
     """
-    LangGraph node: Validate the migration blueprint against Memgraph.
+    LangGraph node: Validate the migration blueprint against Kùzu.
 
     Reads ``blueprint_md`` and ``blast_radius`` from state.
-    Cross-references entity names in the blueprint with the Memgraph graph.
+    Cross-references entity names in the blueprint with the Kùzu graph.
     Writes ``validation_verdict`` back to state.
 
     Args:
@@ -53,7 +53,7 @@ def blueprint_validator_node(state: RefactorState) -> dict:
     # ── Extract entity names mentioned in the blueprint ────────
     mentioned_names = set(_BACKTICK_RE.findall(blueprint))
 
-    # ── Build ground-truth set from Memgraph blast radius ─────
+    # ── Build ground-truth set from Kùzu blast radius ─────
     known_names: set[str] = {
         row.get("name", "") for row in blast_radius if row.get("name")
     }
@@ -66,14 +66,14 @@ def blueprint_validator_node(state: RefactorState) -> dict:
         and name not in known_names
     }
 
-    # ── Also do a quick Memgraph connectivity sanity check ─────
+    # ── Also do a quick Kùzu connectivity sanity check ─────
     connectivity_ok = True
     try:
-        client = MemgraphClient()
+        client = KuzuClient(data_dir=state.get("repo_path") or None)
         # Simple connectivity probe
         client.execute_query("RETURN 1 AS ping", {})
     except Exception as exc:
-        logger.warning("validator_memgraph_unavailable", error=str(exc))
+        logger.warning("validator_kuzu_unavailable", error=str(exc))
         connectivity_ok = False
 
     # ── Determine verdict ──────────────────────────────────────
@@ -86,7 +86,7 @@ def blueprint_validator_node(state: RefactorState) -> dict:
         )
 
     if not connectivity_ok:
-        warnings.append("Memgraph connectivity check failed — validation partial.")
+        warnings.append("Kùzu connectivity check failed — validation partial.")
 
     verdict = "valid" if not warnings else "valid_with_warnings"
 

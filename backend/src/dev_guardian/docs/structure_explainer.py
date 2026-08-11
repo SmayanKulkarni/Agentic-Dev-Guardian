@@ -2,7 +2,7 @@
 Structure Explainer — Phase 5.3: Auto-Generating Dynamic Documentation.
 
 Replaces the legacy Mermaid Diagram Generator.
-Queries the live Memgraph AST graph and feeds the raw structural edges
+Queries the live Kùzu AST graph and feeds the raw structural edges
 (IMPORTS, CALLS, INHERITS_FROM) directly to Groq to generate a concise,
 human-readable architectural summary.
 """
@@ -12,18 +12,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from dev_guardian.core.logging import get_logger
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 
 logger = get_logger(__name__)
 
 
 def explain_module_dependencies(
-    repo_path: Path, mg: MemgraphClient, user_clearance: int = 0
+    repo_path: Path, graph: KuzuClient, user_clearance: int = 0
 ) -> str:
     """
     Generate an AI-narrated summary of inter-module import relationships.
     """
-    rows = mg.execute_query(
+    rows = graph.execute_query(
         """
         MATCH (a:ASTNode)-[:IMPORTS]->(b:ASTNode)
         WHERE a.file_path STARTS WITH $root
@@ -64,21 +64,21 @@ def explain_module_dependencies(
 
 def explain_call_graph(
     function_name: str,
-    mg: MemgraphClient,
+    graph: KuzuClient,
     depth: int = 2,
     user_clearance: int = 0,
 ) -> str:
     """
     Generate an AI-narrated execution trace of a function.
     """
-    rows = mg.execute_query(
+    rows = graph.execute_query(
         f"""
-        MATCH path=(root:ASTNode)-[:CALLS*1..{depth}]->(callee:ASTNode)
+        MATCH (root:ASTNode)-[:CALLS*0..{max(depth - 1, 0)}]->(caller:ASTNode)
+              -[:CALLS]->(callee:ASTNode)
         WHERE root.name = $fn
           AND root.clearance_level <= $cl
           AND callee.clearance_level <= $cl
-        UNWIND relationships(path) AS rel
-        RETURN startNode(rel).name AS caller, endNode(rel).name AS callee
+        RETURN DISTINCT caller.name AS caller, callee.name AS callee
         LIMIT 80
         """,
         {"fn": function_name, "cl": user_clearance},
@@ -112,12 +112,12 @@ def explain_call_graph(
 
 
 def explain_class_hierarchy(
-    repo_path: Path, mg: MemgraphClient, user_clearance: int = 0
+    repo_path: Path, graph: KuzuClient, user_clearance: int = 0
 ) -> str:
     """
     Generate an AI-narrated summary of the object-oriented heritage.
     """
-    rows = mg.execute_query(
+    rows = graph.execute_query(
         """
         MATCH (child:ASTNode)-[:INHERITS_FROM]->(parent:ASTNode)
         WHERE child.file_path STARTS WITH $root

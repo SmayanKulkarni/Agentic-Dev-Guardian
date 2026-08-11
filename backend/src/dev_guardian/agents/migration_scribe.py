@@ -48,8 +48,8 @@ def migration_scribe_node(state: dict) -> dict:
     # ── Fetch GraphRAG context for the impacted area ───────────
     graphrag_context = ""
     try:
-        from dev_guardian.retrieval.hybrid_retriever import HybridRetriever
-        retriever = HybridRetriever()
+        from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
+        retriever = HybridRetriever(data_dir=state.get("repo_path") or None)
         result = retriever.retrieve(
             query=f"{pattern} migration {plan.get('description', '')}",
             user_clearance=state.get("user_clearance", 0),

@@ -6,7 +6,7 @@ Architecture Blueprint Reference: Phase 5.2 — Automated Incident Response.
 Pure deterministic node (no LLM):
   1. Regex-parses a raw Python/generic stack trace to extract the
      failing function name, file path, and exception type/message.
-  2. Queries Memgraph for the responsible AST node and its callers,
+  2. Queries Kùzu for the responsible AST node and its callers,
      producing a blast-radius "blame" map for the hotfix agent.
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from dev_guardian.agents.state import IncidentState
 from dev_guardian.core.logging import get_logger
 from dev_guardian.core.tracing import observe
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 
 logger = get_logger(__name__)
 
@@ -82,7 +82,7 @@ def _parse_stack_trace(trace: str) -> dict:
 @observe(name="incident_triager_agent")
 def incident_triager_node(state: IncidentState) -> dict:
     """
-    LangGraph node: Parse stack trace and map blame via Memgraph.
+    LangGraph node: Parse stack trace and map blame via Kùzu.
 
     Reads ``stack_trace`` and ``repo_path`` from state.
     Writes ``incident_context`` (triage + blame graph data) to state.
@@ -117,12 +117,12 @@ def incident_triager_node(state: IncidentState) -> dict:
         exception=parsed["exception_type"],
     )
 
-    # ── Step 2: Blame analysis via Memgraph ────────────────────
+    # ── Step 2: Blame analysis via Kùzu ────────────────────
     callers: list[dict] = []
     graph_node: dict = {}
 
     try:
-        client = MemgraphClient()
+        client = KuzuClient(data_dir=repo_path or None)
 
         # Find the AST node for the failing function
         nodes = client.query_node_by_name(
@@ -137,7 +137,7 @@ def incident_triager_node(state: IncidentState) -> dict:
             max_depth=2,
         )
     except Exception as exc:
-        logger.warning("incident_triager_memgraph_error", error=str(exc))
+        logger.warning("incident_triager_kuzu_error", error=str(exc))
         # Non-fatal: proceed with parse-only result
 
     incident_context = {

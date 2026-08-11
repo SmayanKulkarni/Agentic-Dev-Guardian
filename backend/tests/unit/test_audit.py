@@ -33,16 +33,22 @@ def wire(monkeypatch, repo):
         import dev_guardian.agents.gatekeeper as gk_mod
         import dev_guardian.agents.red_team as rt_mod
         import dev_guardian.graphrag.hybrid_retriever as hr_mod
-        import dev_guardian.graphrag.memgraph_client as mg_mod
+        import dev_guardian.graphrag.kuzu_client as graph_mod
 
         if rows is None:
             rows = [{**RISKY_ROW, "fp": str(repo / "svc.py")}]
 
-        class FakeMemgraph:
+        class FakeKuzu:
+            def __init__(self, data_dir=None) -> None:
+                pass
+
             def execute_query(self, _query, _params):
                 return rows
 
         class FakeRetriever:
+            def __init__(self, *_a, **_kw):
+                pass
+
             def jit_embed_nodes(self, *_a, **_kw):
                 return None
 
@@ -55,7 +61,7 @@ def wire(monkeypatch, repo):
         def default_rt(_state):
             return {"redteam_report": {"verdict": "pass", "reasoning": "fine"}}
 
-        monkeypatch.setattr(mg_mod, "MemgraphClient", FakeMemgraph)
+        monkeypatch.setattr(graph_mod, "KuzuClient", FakeKuzu)
         monkeypatch.setattr(hr_mod, "HybridRetriever", FakeRetriever)
         monkeypatch.setattr(gk_mod, "gatekeeper_node", gatekeeper or default_gk)
         monkeypatch.setattr(rt_mod, "redteam_node", redteam or default_rt)
