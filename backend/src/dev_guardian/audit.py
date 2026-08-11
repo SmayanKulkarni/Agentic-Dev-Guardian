@@ -138,7 +138,7 @@ def run_audit(
 ) -> AuditReport:
     """Audit the `top` highest blast-radius functions under `path`.
 
-    Queries Memgraph for the functions making the most calls, reads each one
+    Queries Kùzu for the functions making the most calls, reads each one
     from disk, and runs it through the Gatekeeper and Red Team agents as a
     synthetic diff.
 
@@ -158,7 +158,7 @@ def run_audit(
     from dev_guardian.agents.red_team import redteam_node
     from dev_guardian.agents.state import GuardianState
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.graphrag.kuzu_client import KuzuClient
 
     def _report(line: str) -> None:
         if on_progress is not None:
@@ -166,8 +166,8 @@ def run_audit(
 
     logger.info("audit_start", path=str(path), top=top)
 
-    mg = MemgraphClient()
-    risky = mg.execute_query(
+    graph = KuzuClient(data_dir=path)
+    risky = graph.execute_query(
         _RISKIEST_FUNCTIONS_CYPHER,
         {"cl": clearance, "repo_root": str(path), "top_n": top},
     )
@@ -185,7 +185,7 @@ def run_audit(
             ),
         )
 
-    retriever = HybridRetriever()
+    retriever = HybridRetriever(kuzu=graph, data_dir=path)
     findings: list[Finding] = []
 
     for rank, row in enumerate(risky, 1):

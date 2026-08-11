@@ -14,12 +14,13 @@ Configuration contract (ticket 06):
     ascending priority: the user-level file first, then the repo-local ones,
     so a checkout can override a global default. Real environment variables
     beat every file.
-  * **Nothing is written by Guardian.** `dev-guardian init --print-mcp-config`
-    emits the JSON block for the user to paste; there is no secret store to
-    manage, corrupt, or leak.
-  * Global vs per-project: credentials, provider choice and service endpoints
-    are global (user-level env or dotenv). The indexed repository is
-    per-invocation — it is a CLI argument, never configuration.
+  * **Nothing is written by Guardian.** `dev-guardian mcp-config` emits the
+    JSON block for the user to paste; there is no secret store to manage,
+    corrupt, or leak.
+  * Global vs per-project: credentials and provider choice are global
+    (user-level env or dotenv). The indexed repository is per-invocation — it
+    is a CLI argument or `GUARDIAN_REPO`, never a setting — and its graph and
+    vector stores live inside it, under `.guardian/`.
 """
 
 from pathlib import Path
@@ -50,8 +51,6 @@ class GuardianSettings(BaseSettings):
         langfuse_secret_key: Secret key for Langfuse LLMOps tracing.
         langfuse_host: Langfuse server host URL.
         default_language: Default programming language for AST parsing.
-        memgraph_host/port: Bolt endpoint for the GraphRAG store.
-        qdrant_host/port: HTTP endpoint for the vector store.
         embedding_model: fastembed model used for code embeddings.
     """
 
@@ -75,23 +74,6 @@ class GuardianSettings(BaseSettings):
         validation_alias=_alias("GUARDIAN_DEFAULT_LANGUAGE", "DEFAULT_LANGUAGE"),
     )
 
-    # Phase 2: Database connections
-    memgraph_host: str = Field(
-        default="127.0.0.1",
-        validation_alias=_alias("GUARDIAN_MEMGRAPH_HOST", "MEMGRAPH_HOST"),
-    )
-    memgraph_port: int = Field(
-        default=7687,
-        validation_alias=_alias("GUARDIAN_MEMGRAPH_PORT", "MEMGRAPH_PORT"),
-    )
-    qdrant_host: str = Field(
-        default="127.0.0.1",
-        validation_alias=_alias("GUARDIAN_QDRANT_HOST", "QDRANT_HOST"),
-    )
-    qdrant_port: int = Field(
-        default=6333,
-        validation_alias=_alias("GUARDIAN_QDRANT_PORT", "QDRANT_PORT"),
-    )
     embedding_model: str = Field(
         default="jinaai/jina-embeddings-v2-base-code",
         validation_alias=_alias("GUARDIAN_EMBEDDING_MODEL", "EMBEDDING_MODEL"),

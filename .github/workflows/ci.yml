@@ -44,7 +44,9 @@ jobs:
         env:
           GROQ_API_KEY: "test-key-not-real"
         run: |
-          pytest tests/unit/ tests/integration/test_mcp_client_contract.py -v \
+          pytest tests/unit/ \
+            tests/integration/test_mcp_client_contract.py \
+            tests/integration/test_embedded_stores.py -v \
             -m "not integration and not llm" \
             --tb=short \
             --cov=src/dev_guardian/harness \
@@ -57,12 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
-
-    services:
-      memgraph:
-        image: memgraph/memgraph:latest
-        ports:
-          - 7687:7687
 
     steps:
       - uses: actions/checkout@v4
@@ -83,8 +79,6 @@ jobs:
         working-directory: backend
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          MEMGRAPH_HOST: localhost
-          MEMGRAPH_PORT: 7687
         run: |
           pytest tests/integration/ -v \
             -m "integration and not llm" \

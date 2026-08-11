@@ -1,20 +1,20 @@
 """
 Hybrid GraphRAG Retriever.
 
-Architecture Blueprint Reference: Phase 2 — Memgraph & Qdrant Integration.
-This module implements the unified retrieval class that queries BOTH
-Memgraph (structural graph) and Qdrant (semantic vectors) simultaneously,
-then merges the results into a single context payload for the LLM.
+The unified retrieval class that queries BOTH the embedded Kùzu graph
+(structural) and the embedded Qdrant store (semantic), then merges the results
+into a single context payload for the LLM.
 
 This is the core "GraphRAG" pattern:
   - Qdrant answers "fuzzy" questions  → "Which function handles tax?"
-  - Memgraph answers "exact" questions → "What calls calculate_tax()?"
+  - Kùzu answers "exact" questions    → "What calls calculate_tax()?"
   - The merged context gives the LLM both precision and recall.
 """
 
+from pathlib import Path
 
 from dev_guardian.core.logging import get_logger
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 from dev_guardian.graphrag.qdrant_client import QdrantCodeClient
 from dev_guardian.parsers.models import ParseResult
 
@@ -25,34 +25,35 @@ class HybridRetriever:
     """
     Unified GraphRAG retriever merging graph + vector results.
 
-    Combines structural Cypher queries (Memgraph) with semantic
+    Combines structural Cypher queries (Kùzu) with semantic
     vector search (Qdrant) and de-duplicates results into a
     single context block suitable for LLM consumption.
     """
 
     def __init__(
         self,
-        memgraph: MemgraphClient | None = None,
+        kuzu: KuzuClient | None = None,
         qdrant: QdrantCodeClient | None = None,
+        data_dir: Path | str | None = None,
     ) -> None:
         """
-        Initialize with Memgraph and Qdrant clients.
-
-        If not provided, defaults are created from config.
+        Initialize with graph and vector clients.
 
         Args:
-            memgraph: Optional pre-configured MemgraphClient.
+            kuzu: Optional pre-configured KuzuClient.
             qdrant: Optional pre-configured QdrantCodeClient.
+            data_dir: Indexed repository root, used to build any client not
+                passed in. Defaults to $GUARDIAN_REPO, then the cwd.
         """
-        self._memgraph = memgraph or MemgraphClient()
-        self._qdrant = qdrant or QdrantCodeClient()
+        self._kuzu = kuzu or KuzuClient(data_dir=data_dir)
+        self._qdrant = qdrant or QdrantCodeClient(data_dir=data_dir)
         logger.info("hybrid_retriever_init")
 
     def ingest(self, parse_result: ParseResult) -> dict:
         """
         Ingest a ParseResult into both databases.
 
-        Sends AST Nodes/Edges to Memgraph and embeds Nodes
+        Sends AST Nodes/Edges to Kùzu and embeds Nodes
         into Qdrant for semantic search.
 
         Args:
@@ -62,11 +63,11 @@ class HybridRetriever:
             Dictionary summarizing ingestion counts.
         """
         # Ensure infrastructure is ready
-        self._memgraph.ensure_indexes()
+        self._kuzu.ensure_schema()
         self._qdrant.ensure_collection()
 
-        # Ingest into Memgraph (structural graph)
-        graph_stats = self._memgraph.ingest_parse_result(parse_result)
+        # Ingest into Kùzu (structural graph)
+        graph_stats = self._kuzu.ingest_parse_result(parse_result)
 
         # Ingest into Qdrant (semantic vectors)
         vector_count = self._qdrant.ingest_nodes(parse_result.nodes)
@@ -83,12 +84,12 @@ class HybridRetriever:
         """
         Just-In-Time (Lazy) Embeddings.
 
-        Fetches specific nodes from Memgraph by name, embeds them via ONNX,
+        Fetches specific nodes from Kùzu by name, embeds them via ONNX,
         and pushes them to Qdrant. Used to populate vector contexts
         at runtime for large codebases where `--skip-vectors` was used.
 
         Args:
-            names: List of node names to locate in Memgraph.
+            names: List of node names to locate in Kùzu.
             user_clearance: ABAC clearance level.
 
         Returns:
@@ -101,7 +102,7 @@ class HybridRetriever:
 
         nodes_to_embed = []
         for name in names:
-            results = self._memgraph.query_node_by_name(name, user_clearance)
+            results = self._kuzu.query_node_by_name(name, user_clearance)
             for res in results:
                 try:
                     node = ASTNode(
@@ -146,7 +147,7 @@ class HybridRetriever:
 
         1. Run a semantic search on Qdrant to find fuzzy matches.
         2. For each semantic hit, run a structural impact query
-           on Memgraph to find connected graph entities.
+           on Kùzu to find connected graph entities.
         3. Merge and de-duplicate results.
 
         SECURITY: Both queries enforce ABAC clearance filtering.
@@ -167,7 +168,7 @@ class HybridRetriever:
             top_k=top_k,
         )
 
-        # Step 2: Structural expansion (Memgraph)
+        # Step 2: Structural expansion (Kùzu)
         graph_context: list[dict] = []
         seen_names: set[str] = set()
 
@@ -178,14 +179,14 @@ class HybridRetriever:
             seen_names.add(name)
 
             # Direct node lookup
-            nodes = self._memgraph.query_node_by_name(
+            nodes = self._kuzu.query_node_by_name(
                 name=name,
                 user_clearance=user_clearance,
             )
             graph_context.extend(nodes)
 
             # Impact analysis
-            impacted = self._memgraph.query_impact_analysis(
+            impacted = self._kuzu.query_impact_analysis(
                 function_name=name,
                 user_clearance=user_clearance,
                 max_depth=2,

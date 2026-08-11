@@ -40,7 +40,7 @@ def _analyze_blast_radius(
     repo_path: str = ".",
     function_name: str = "",
 ) -> str:
-    """Analyze the blast radius of a migration pattern using Memgraph.
+    """Analyze the blast radius of a migration pattern using Kùzu.
 
     Runs the pattern's Cypher query against the indexed knowledge graph
     and returns the list of ALL impacted AST entities. This is a pure
@@ -58,7 +58,7 @@ def _analyze_blast_radius(
         JSON with the impacted entity count and entity list.
     """
     from dev_guardian.agents.refactor_patterns import get_pattern
-    from dev_guardian.graphrag.clients import get_memgraph, reset_clients
+    from dev_guardian.graphrag.clients import get_kuzu, reset_clients
 
     logger.info("mcp_analyze_blast_radius", pattern=pattern, repo_path=repo_path)
 
@@ -71,7 +71,7 @@ def _analyze_blast_radius(
         params: dict = {"repo_path": repo_path}
         if function_name:
             params["function_name"] = function_name
-        rows = get_memgraph().execute_query(pattern_def["cypher"].strip(), params)
+        rows = get_kuzu().execute_query(pattern_def["cypher"].strip(), params)
     except Exception as exc:
         reset_clients()
         return json.dumps({"error": f"Graph query failed: {exc}"})
@@ -95,7 +95,7 @@ def _generate_refactor_blueprint(
     """Run the full Self-Healing refactor pipeline and generate a Markdown Blueprint.
 
     Executes the 3-agent LangGraph pipeline:
-      1. RefactorPlanner → deterministic blast-radius analysis via Memgraph.
+      1. RefactorPlanner → deterministic blast-radius analysis via Kùzu.
       2. MigrationScribe → file-by-file Markdown migration instructions via Groq.
       3. BlueprintValidator → sanity-checks the blueprint against the graph.
 
@@ -153,7 +153,7 @@ def _generate_refactor_blueprint(
 CLUSTER_REGISTRY["self_healing"] = {
     "description": (
         "Phase 5.1: Self-Healing Codebase Maintenance. "
-        "Deterministic Memgraph blast-radius analysis + Groq-powered migration blueprints."
+        "Deterministic Kùzu blast-radius analysis + Groq-powered migration blueprints."
     ),
     "tools": {
         "list_refactor_patterns": _list_refactor_patterns,

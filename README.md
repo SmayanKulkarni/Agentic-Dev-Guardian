@@ -32,8 +32,8 @@ Reach for it when you want:
 
 ## Quickstart
 
-You need Python 3.11+. Docker only matters if you want Guardian to run Memgraph and Qdrant
-for you; point it at your own instances instead if you already run them.
+You need Python 3.11+. Nothing else — the graph and vector stores are embedded and run
+inside the Guardian process.
 
 ```bash
 pip install agentic-dev-guardian          # or: uvx --from agentic-dev-guardian dev-guardian --help
@@ -41,12 +41,17 @@ pip install agentic-dev-guardian          # or: uvx --from agentic-dev-guardian 
 export GUARDIAN_PROVIDER=groq             # groq | anthropic | openai | ollama | local | huggingface
 export GUARDIAN_GROQ_API_KEY=...          # groq key; anthropic/openai use ANTHROPIC_API_KEY / OPENAI_API_KEY instead
 
-dev-guardian init                         # starts/health-checks Memgraph + Qdrant, reuses what is up
 dev-guardian index /path/to/your/repo     # add --skip-vectors on RAM-constrained machines
 dev-guardian evaluate my_feature.diff --repo /path/to/your/repo
 ```
 
 Extras: `pip install "agentic-dev-guardian[anthropic]"` (also `openai`, `viz`, `tracing`, `all`).
+
+> **Upgrading from a Docker-backed install:** the embedded stores do not read
+> the old container volumes. Re-run `dev-guardian index <path>` once per
+> repository, then remove the leftovers with
+> `docker rm -f guardian-memgraph guardian-qdrant`. Guardian no longer manages
+> any containers.
 
 Working from a checkout:
 
@@ -63,8 +68,9 @@ pip install -e ".[dev]"
 
 Guardian runs in two stages.
 
-1. **Index.** Tree-sitter parses the codebase. Memgraph stores the structural edges
-   (`IMPORTS`, `CALLS`, `INHERITS_FROM`) and Qdrant stores the semantic index.
+1. **Index.** Tree-sitter parses the codebase. Kùzu stores the structural edges
+   (`IMPORTS`, `CALLS`, `INHERITS_FROM`) and Qdrant stores the semantic index, both under
+   `<repo>/.guardian/`.
 2. **Act.** LangGraph pipelines query that graph to evaluate PRs, audit risky functions,
    triage incidents, plan refactors, or write architecture docs.
 
@@ -74,15 +80,14 @@ Guardian runs in two stages.
 
 | CLI Command | What It Does |
 |---|---|
-| `dev-guardian index <path>` | Parse & ingest a codebase into Memgraph + Qdrant (streaming, memory-safe) |
+| `dev-guardian index <path>` | Parse & ingest a codebase into the embedded stores (streaming, memory-safe) |
 | `dev-guardian evaluate <diff>` | Run a PR diff through the MoA Gatekeeper + Red Team pipeline |
 | `dev-guardian audit <path>` | Find the highest blast-radius functions and red-team them |
 | `dev-guardian incident --trace "..."` | Turn a production stack trace into a targeted hotfix blueprint |
 | `dev-guardian refactor --pattern "..."` | Build a migration blueprint from a pattern or plain English |
 | `dev-guardian docs <path>` | Write a live `GUARDIAN_WIKI.md` from the AST graph |
 | `dev-guardian serve` | Start the MCP Server for IDE integration (Cursor, Claude Desktop, Windsurf) |
-| `dev-guardian init` | Start and health-check Memgraph + Qdrant; `--print-mcp-config` emits your IDE's JSON block |
-| `dev-guardian down` | Stop the containers `init` started, leaving services you run yourself alone |
+| `dev-guardian mcp-config` | Print your IDE's MCP JSON block (`--client vscode\|codex\|cursor\|...`) |
 | `dev-guardian version` | Print the installed version |
 
 ---
@@ -92,8 +97,8 @@ Guardian runs in two stages.
 | Layer | Technology |
 |---|---|
 | **AST Parsing** | Tree-sitter with a custom Python walker |
-| **Knowledge Graph** | Memgraph, holding `ASTNode` relationships (`IMPORTS`, `CALLS`, `INHERITS_FROM`) |
-| **Semantic Index** | Qdrant + FastEmbed (ONNX; `--skip-vectors` for RAM-constrained systems) |
+| **Knowledge Graph** | Kùzu (embedded, file-backed under `<repo>/.guardian/kuzu`), holding `ASTNode` relationships (`IMPORTS`, `CALLS`, `INHERITS_FROM`) |
+| **Semantic Index** | Qdrant embedded (`<repo>/.guardian/qdrant`) + FastEmbed (ONNX; `--skip-vectors` for RAM-constrained systems) |
 | **Hybrid Retrieval** | `HybridRetriever`, fusing Cypher graph results with Qdrant vector search |
 | **Agent Orchestration** | LangGraph typed state graphs (`GuardianState`, `SREState`, `RefactorState`) |
 | **LLM Engine** | Groq (`llama-3.3-70b-versatile`) by default; also Anthropic, OpenAI, Ollama, or any OpenAI-compatible endpoint |
@@ -116,7 +121,7 @@ or `anthropic` or `openai`. Choosing `ollama` or `local` keeps the calls on your
 infrastructure, though the prompts assume a 70B-class model. Smaller local models lose the
 most ground on Red Team test generation, Remediation diffs, and text-to-Cypher.
 
-**What stays local:** the Memgraph AST graph, the Qdrant index, and every deterministic
+**What stays local:** the Kùzu AST graph, the Qdrant index, and every deterministic
 node, meaning `IncidentTriager`, `RefactorPlanner`, `BlueprintValidator`, and the
 supervisor's routing logic. Blast-radius and impact analysis run on your own graph with no
 LLM in the loop.
@@ -136,7 +141,7 @@ Reads a `.diff` file, pulls GraphRAG context for it, then runs a Mixture-of-Agen
 that lands on `approve`, `remediate`, or `reject`.
 
 ### Proactive Audit (`audit`)
-`Memgraph (blast-radius query) → Gatekeeper → Red Team → Markdown Report`
+`Kùzu (blast-radius query) → Gatekeeper → Red Team → Markdown Report`
 
 Ranks functions by outgoing calls, red-teams the top N without waiting for a PR, and writes
 a severity-ranked `guardian_audit.md`.
@@ -144,7 +149,7 @@ a severity-ranked `guardian_audit.md`.
 ### Incident Response (`incident`)
 `IncidentTriager → SandboxReproducer → HotfixScribe`
 
-Parses a raw stack trace, asks Memgraph for the call graph around the failing function,
+Parses a raw stack trace, asks Kùzu for the call graph around the failing function,
 tries to reproduce the failure, and drafts a hotfix blueprint.
 
 ### Self-Healing Refactor (`refactor`)
@@ -201,18 +206,25 @@ keep your IDE's context window lean:
 Everything heavier arrives just in time. `equip_capability("pr_governance")` adds
 `evaluate_pr_diff`, `codebase_intelligence` adds `impact_analysis`, `index_codebase`,
 `audit_codebase` and `generate_architecture_docs`, and `incident_response` and
-`self_healing` bring their own. Every CLI command that acts on an indexed repository has
-an MCP equivalent — only `init` and `down`, which manage Docker, stay terminal-only, since
-nothing auto-starts a container from a session with no terminal to prompt on. The server fires
+`self_healing` bring their own. Every CLI command has an MCP equivalent; there is no
+infrastructure command left to run. The server fires
 `notifications/tools/list_changed` on each swap, so a client that caches the tool list for
 a session picks the new tools up on its next refresh rather than right away.
+
+### Why MCP over CLI
+
+The CLI is fire-and-forget. You write code, save a diff, switch to terminal, run `dev-guardian evaluate diff.patch`, parse the markdown output, and switch back. Each run costs context: initialization overhead, format conversion, re-parsing.
+
+MCP stays in session. Your agent (Claude, in Cursor or Claude Desktop) calls Guardian's tools directly. No round-trip through markdown. No manual parsing. A diff already open in your IDE? Pass it straight to `evaluate_pr_diff`. Stack trace in a comment? Copy it to `incident_response`. Results land in-chat, structured.
+
+Token savings add up on multi-turn work. One session, persistent context, batch operations, caching on repeated queries. On a typical PR audit, MCP uses 30% fewer tokens than CLI + conversation.
 
 Generate the exact block for your install, filled in with your resolved settings:
 
 ```bash
-dev-guardian init --print-mcp-config                    # Claude Code / Claude Desktop
-dev-guardian init --print-mcp-config --client vscode    # .vscode/mcp.json
-dev-guardian init --print-mcp-config --client codex     # ~/.codex/config.toml
+dev-guardian mcp-config                    # Claude Code / Claude Desktop
+dev-guardian mcp-config --client vscode    # .vscode/mcp.json
+dev-guardian mcp-config --client codex     # ~/.codex/config.toml
 ```
 
 ```json
@@ -237,10 +249,7 @@ so `evaluate_pr_diff` behaves the same in every client — it does not borrow th
 model and does not need the editor to spawn sub-agents. It does need its own key, or
 `GUARDIAN_PROVIDER=ollama` for a fully local run.
 
-Run `dev-guardian init` and index at least one repository before you point an IDE at the
-server. `serve` checks the backing services and exits if they are down. Docker is only
-needed for that step: nothing auto-starts a container from inside an MCP session, where
-there is no terminal to prompt on.
+Index at least one repository before you point an IDE at the server.
 
 ### Clients that ignore `tools/list_changed`
 
@@ -289,7 +298,7 @@ setup silently no-ops every trace with an auth error nobody sees.
 backend/src/dev_guardian/
 ├── core/                # Config (Pydantic Settings) + structured logging (structlog)
 ├── parsers/             # Tree-sitter AST parser + ASTNode/ASTEdge data models
-├── graphrag/            # Memgraph client, Qdrant client, vector manager, hybrid retriever
+├── graphrag/            # Kùzu client, Qdrant client, vector manager, hybrid retriever
 ├── agents/              # LangGraph nodes, typed state definitions, graph builders
 ├── capability_clusters/ # Tool groupings (codebase_intelligence, pr_governance, ...)
 ├── harness/             # Prompt YAML loading + local SQLite LLM call log
@@ -301,9 +310,8 @@ backend/src/dev_guardian/
 ```
 
 The repo also carries `frontend/` (dashboard UI), `evaluation/` (benchmark datasets and
-scripts), `infrastructure/` (Memgraph and Qdrant compose files), and `.agents/` (memory,
-skills, logs). The PyPI wheel ships none of them. It contains `backend/src/dev_guardian`
-and nothing else.
+scripts), and `.agents/` (memory, skills, logs). The PyPI wheel ships none of them. It
+contains `backend/src/dev_guardian` and nothing else.
 
 ---
 

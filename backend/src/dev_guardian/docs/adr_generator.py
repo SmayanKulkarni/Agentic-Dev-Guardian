@@ -3,7 +3,7 @@ ADR Generator — Phase 5.3: Auto-Generating Dynamic Documentation.
 
 Generates Architectural Decision Records (ADRs) for the most structurally
 significant functions/classes in a codebase, using Groq to narrate the
-rationale based on the code source and its connected Memgraph graph context.
+rationale based on the code source and its connected Kùzu graph context.
 
 ADR format (MADR-style):
   - Status
@@ -17,33 +17,33 @@ from __future__ import annotations
 from pathlib import Path
 
 from dev_guardian.core.logging import get_logger
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 
 logger = get_logger(__name__)
 
 
 def get_top_complex_nodes(
     repo_path: Path,
-    mg: MemgraphClient,
+    graph: KuzuClient,
     top_n: int = 5,
     user_clearance: int = 0,
 ) -> list[dict]:
     """
-    Query Memgraph for the highest blast-radius functions in the repo.
+    Query Kùzu for the highest blast-radius functions in the repo.
 
     Returns the top_n functions ordered by outgoing CALLS edge count,
     which represents structural complexity and downstream risk.
 
     Args:
         repo_path: Root of the indexed repository.
-        mg: Active MemgraphClient.
+        graph: Active KuzuClient.
         top_n: Number of nodes to return.
         user_clearance: ABAC clearance level.
 
     Returns:
         List of dicts with keys: name, file_path, start_line, end_line, call_count.
     """
-    rows = mg.execute_query(
+    rows = graph.execute_query(
         """
         MATCH (n:ASTNode)-[:CALLS]->(callee:ASTNode)
         WHERE n.node_type IN ["function", "method"]

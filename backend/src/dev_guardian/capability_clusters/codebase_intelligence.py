@@ -26,7 +26,7 @@ def _impact_analysis(
 ) -> str:
     """Analyze the blast radius of modifying a specific function.
 
-    Traverses the Memgraph AST knowledge graph to find all functions,
+    Traverses the Kùzu AST knowledge graph to find all functions,
     classes, and modules that directly or transitively depend on the
     specified function. This reveals the full impact of changing or
     deleting a function.
@@ -43,7 +43,7 @@ def _impact_analysis(
         A structured list of all impacted entities with their types,
         file paths, and relationship chains.
     """
-    from dev_guardian.graphrag.clients import get_memgraph, reset_clients
+    from dev_guardian.graphrag.clients import get_kuzu, reset_clients
 
     logger.info(
         "mcp_impact_analysis",
@@ -52,7 +52,7 @@ def _impact_analysis(
     )
 
     try:
-        impacted = get_memgraph().query_impact_analysis(
+        impacted = get_kuzu().query_impact_analysis(
             function_name=function_name,
             user_clearance=clearance,
             max_depth=max_depth,
@@ -75,7 +75,7 @@ def _impact_analysis(
         logger.error("mcp_impact_error", error=str(exc))
         return (
             f"[Guardian Error] Impact analysis failed: {exc}. "
-            "Ensure Memgraph is running and the codebase has been indexed."
+            "Ensure the codebase has been indexed with `dev-guardian index`."
         )
 
 
@@ -87,7 +87,7 @@ def _index_codebase(
 
     Uses Tree-sitter to deterministically extract AST nodes (functions,
     classes, variables) and edges (calls, imports, inheritance), then
-    ingests them into Memgraph (structural graph) and Qdrant (semantic
+    ingests them into Kùzu (structural graph) and Qdrant (semantic
     vectors).
 
     Use this tool to initialize or refresh the knowledge graph after
@@ -120,8 +120,8 @@ def _index_codebase(
 
         return (
             f"Indexed {results.total_files} files — "
-            f"{summary['graph_nodes']} Memgraph Nodes, "
-            f"{summary['graph_edges']} Memgraph Edges, "
+            f"{summary['graph_nodes']} Kùzu Nodes, "
+            f"{summary['graph_edges']} Kùzu Edges, "
             f"{summary['vectors_embedded']} Qdrant Vectors."
         )
 
@@ -195,7 +195,7 @@ def _generate_architecture_docs(
 ) -> str:
     """Generate an architecture wiki from the indexed graph.
 
-    Reads the already-indexed Memgraph AST graph — no re-parsing — and
+    Reads the already-indexed Kùzu AST graph — no re-parsing — and
     narrates it into markdown containing a module dependency flowchart, the
     class inheritance hierarchy, call graphs for the top-N functions (all as
     Mermaid diagrams), and LLM-written Architectural Decision Records.
@@ -214,7 +214,7 @@ def _generate_architecture_docs(
         The generated wiki markdown.
     """
     from dev_guardian.docs.wiki_builder import build_wiki, save_wiki
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.graphrag.kuzu_client import KuzuClient
 
     logger.info("mcp_generate_docs", path=path, top=top)
 
@@ -227,7 +227,7 @@ def _generate_architecture_docs(
 
         wiki = build_wiki(
             repo_path=target,
-            mg=MemgraphClient(),
+            graph=KuzuClient(data_dir=target),
             top_n=top,
             user_clearance=clearance,
         )
@@ -241,7 +241,7 @@ def _generate_architecture_docs(
         logger.error("mcp_docs_error", error=str(exc))
         return (
             f"[Guardian Error] Documentation generation failed: {exc}. "
-            "Ensure Memgraph is running and the codebase has been indexed."
+            "Ensure the codebase has been indexed with `dev-guardian index`."
         )
 
 

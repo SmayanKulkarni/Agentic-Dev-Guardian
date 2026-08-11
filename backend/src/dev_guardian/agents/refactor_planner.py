@@ -4,7 +4,7 @@ RefactorPlanner Agent — Blast Radius Analyst.
 Architecture Blueprint Reference: Phase 5.1 + Text-to-Cypher Enhancement.
 
 Executes the ``cypher_query`` from state (set by PatternTranslator) against
-Memgraph to produce a deterministic, ordered list of impacted AST entities.
+Kùzu to produce a deterministic, ordered list of impacted AST entities.
 
 This node is now fully decoupled from the pattern registry — it only cares
 about the Cypher query that PatternTranslator resolved for it.
@@ -16,7 +16,7 @@ from __future__ import annotations
 from dev_guardian.agents.state import RefactorState
 from dev_guardian.core.logging import get_logger
 from dev_guardian.core.tracing import observe
-from dev_guardian.graphrag.memgraph_client import MemgraphClient
+from dev_guardian.graphrag.kuzu_client import KuzuClient
 
 logger = get_logger(__name__)
 
@@ -27,7 +27,7 @@ def refactor_planner_node(state: RefactorState) -> dict:
     LangGraph node: Deterministic blast-radius analysis.
 
     Reads ``cypher_query``, ``pattern``, and ``repo_path`` from state
-    (populated by PatternTranslator), executes the Cypher against Memgraph,
+    (populated by PatternTranslator), executes the Cypher against Kùzu,
     and writes ``blast_radius`` and ``refactor_plan`` back to state.
 
     Args:
@@ -55,9 +55,9 @@ def refactor_planner_node(state: RefactorState) -> dict:
             ],
         }
 
-    # ── Execute Cypher query against Memgraph ──────────────────
+    # ── Execute Cypher query against Kùzu ──────────────────
     try:
-        client = MemgraphClient()
+        client = KuzuClient(data_dir=repo_path or None)
         params = {"repo_path": repo_path, **extra_params}
         rows = client.execute_query(cypher_query, params)
     except Exception as exc:
@@ -65,7 +65,7 @@ def refactor_planner_node(state: RefactorState) -> dict:
         return {
             "blast_radius": [],
             "refactor_plan": {},
-            "messages": [f"[RefactorPlanner] Memgraph query failed: {exc}"],
+            "messages": [f"[RefactorPlanner] Kùzu query failed: {exc}"],
         }
 
     if not rows:

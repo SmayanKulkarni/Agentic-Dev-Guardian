@@ -44,7 +44,8 @@ dependencies = [
     # LLM Provider (Groq)
     "groq>=0.9.0",
     # Phase 2: Graph & Vector Databases
-    "gqlalchemy>=1.6.0",
+    # Embedded graph store — no server process, file-backed under <repo>/.guardian/kuzu
+    "kuzu>=0.11",
     "qdrant-client>=1.9.0",
     "fastembed>=0.3.0",
     # Phase 3: Agent Orchestration
@@ -102,7 +103,7 @@ packages = ["src/dev_guardian"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
-    "integration: marks tests requiring live Memgraph/Qdrant (deselect with -m 'not integration')",
+    "integration: marks tests that download the fastembed model or hit live services (deselect with -m 'not integration')",
     "llm: marks tests that call real LLM APIs (deselect with -m 'not llm')",
 ]
 
