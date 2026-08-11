@@ -27,3 +27,7 @@ Thumbs.db
 # Type checker caches
 .mypy_cache/
 .pyright/
+
+# Copied from repo root by scripts/prepare_package_files.sh before build
+/README.md
+/LICENSE

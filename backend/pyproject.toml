@@ -6,10 +6,10 @@ build-backend = "hatchling.build"
 name = "agentic-dev-guardian"
 dynamic = ["version"]
 description = "AI Developer Governance & Codebase Evaluator — A GraphRAG-powered multi-agent system featuring autonomous code evaluation, red-team testing, and dynamic LLM-narrated architectural documentation."
-readme = "README.md"  # symlink to the repo-root README
+readme = "README.md"  # copied from repo root at build time, see scripts/prepare_package_files.sh
 requires-python = ">=3.11"
 license = {text = "MIT"}
-license-files = ["LICENSE"]  # symlink to the repo-root LICENSE
+license-files = ["LICENSE"]  # copied from repo root at build time, see scripts/prepare_package_files.sh
 authors = [
     {name = "Smayan Kulkarni"}
 ]
