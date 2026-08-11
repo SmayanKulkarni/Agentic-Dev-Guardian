@@ -13,6 +13,9 @@ leaves the machine during vectorization.
 """
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
@@ -30,6 +33,7 @@ from qdrant_client.http.models import (
 
 from dev_guardian.core.config import get_settings
 from dev_guardian.core.logging import get_logger
+from dev_guardian.core.storage import busy_store, guardian_data_dir
 from dev_guardian.parsers.models import ASTNode
 
 logger = get_logger(__name__)
@@ -48,30 +52,27 @@ class QdrantCodeClient:
 
     def __init__(
         self,
-        host: str | None = None,
-        port: int | None = None,
+        data_dir: Path | str | None = None,
         embedding_model: str | None = None,
     ) -> None:
         """
-        Initialize Qdrant client and local embedding model.
+        Initialize the embedded vector store and the local embedding model.
 
         Args:
-            host: Qdrant server host.
-            port: Qdrant gRPC/HTTP port.
+            data_dir: The indexed repository root. Vectors live in
+                `<data_dir>/.guardian/qdrant`. Defaults to $GUARDIAN_REPO,
+                then the current working directory.
             embedding_model: fastembed model name for local vectors.
         """
         settings = get_settings()
-        self._host = host or settings.qdrant_host
-        self._port = port or settings.qdrant_port
+        self.data_dir = guardian_data_dir(data_dir) / "qdrant"
+        self._path = str(self.data_dir)
         self._model_name = embedding_model or settings.embedding_model
+        self._client: QdrantClient | None = None
 
-        self._client = QdrantClient(
-            host=self._host,
-            port=self._port,
-        )
-        self._embedder = TextEmbedding(
-            model_name=self._model_name,
-        )
+        # The ONNX model load is the expensive part of construction and holds
+        # no file lock, so it stays on the instance for the process's life.
+        self._embedder = TextEmbedding(model_name=self._model_name)
 
         # Determine vector dimension from a test embedding
         test_vec = list(self._embedder.embed(["test"]))[0]
@@ -79,11 +80,31 @@ class QdrantCodeClient:
 
         logger.info(
             "qdrant_client_init",
-            host=self._host,
-            port=self._port,
+            path=self._path,
             model=self._model_name,
             vector_dim=self._vector_size,
         )
+
+    @contextmanager
+    def session(self) -> Iterator[QdrantClient]:
+        """An open embedded client, reusing the caller's if one is open.
+
+        Qdrant's local mode takes an exclusive lock on its storage folder, so
+        the handle is closed as soon as the outermost caller is done — an IDE
+        holding `dev-guardian serve` open must not block `dev-guardian index`.
+        """
+        if self._client is not None:
+            yield self._client
+            return
+
+        with busy_store(self._path):
+            client = QdrantClient(path=self._path)
+        self._client = client
+        try:
+            yield client
+        finally:
+            self._client = None
+            client.close()
 
     def ensure_collection(self) -> None:
         """
@@ -92,38 +113,36 @@ class QdrantCodeClient:
         Configures Cosine distance and payload indexes for ABAC
         metadata (clearance_level, owner_team, file_path).
         """
-        collections = self._client.get_collections().collections
-        exists = any(c.name == COLLECTION_NAME for c in collections)
+        with self.session() as client:
+            collections = client.get_collections().collections
+            exists = any(c.name == COLLECTION_NAME for c in collections)
 
-        if not exists:
-            self._client.create_collection(
+            if not exists:
+                client.create_collection(
+                    collection_name=COLLECTION_NAME,
+                    vectors_config=VectorParams(
+                        size=self._vector_size,
+                        distance=Distance.COSINE,
+                    ),
+                )
+                logger.info("qdrant_collection_created", name=COLLECTION_NAME)
+
+            # Payload indexes for fast ABAC filtering
+            client.create_payload_index(
                 collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=self._vector_size,
-                    distance=Distance.COSINE,
-                ),
+                field_name="clearance_level",
+                field_schema=PayloadSchemaType.INTEGER,
             )
-            logger.info(
-                "qdrant_collection_created",
-                name=COLLECTION_NAME,
+            client.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="owner_team",
+                field_schema=PayloadSchemaType.KEYWORD,
             )
-
-        # Create payload indexes for fast ABAC filtering
-        self._client.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="clearance_level",
-            field_schema=PayloadSchemaType.INTEGER,
-        )
-        self._client.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="owner_team",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
-        self._client.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="file_path",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
+            client.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="file_path",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
         logger.info("qdrant_payload_indexes_created")
 
     def ingest_nodes(self, nodes: list[ASTNode]) -> int:
@@ -151,42 +170,43 @@ class QdrantCodeClient:
         batch_size = 32  # Small batches to limit ONNX intermediate tensor RAM
         total_upserted = 0
 
-        for i in range(0, len(nodes), batch_size):
-            batch = nodes[i:i + batch_size]
-            texts = [self._build_embedding_text(n) for n in batch]
+        with self.session() as client:
+            for i in range(0, len(nodes), batch_size):
+                batch = nodes[i:i + batch_size]
+                texts = [self._build_embedding_text(n) for n in batch]
 
-            # Embed batch — ONNX allocates large intermediate tensors
-            embeddings = list(self._embedder.embed(texts))
+                # Embed batch — ONNX allocates large intermediate tensors
+                embeddings = list(self._embedder.embed(texts))
 
-            points = []
-            for node, vector in zip(batch, embeddings, strict=False):
-                point_id = self._stable_point_id(node)
-                points.append(
-                    PointStruct(
-                        id=point_id,
-                        vector=vector.tolist(),
-                        payload={
-                            "name": node.name,
-                            "node_type": node.node_type.value,
-                            "file_path": node.file_path,
-                            "start_line": node.start_line,
-                            "end_line": node.end_line,
-                            "docstring": node.docstring or "",
-                            "owner_team": node.owner_team,
-                            "clearance_level": node.clearance_level,
-                        },
+                points = []
+                for node, vector in zip(batch, embeddings, strict=False):
+                    point_id = self._stable_point_id(node)
+                    points.append(
+                        PointStruct(
+                            id=point_id,
+                            vector=vector.tolist(),
+                            payload={
+                                "name": node.name,
+                                "node_type": node.node_type.value,
+                                "file_path": node.file_path,
+                                "start_line": node.start_line,
+                                "end_line": node.end_line,
+                                "docstring": node.docstring or "",
+                                "owner_team": node.owner_team,
+                                "clearance_level": node.clearance_level,
+                            },
+                        )
                     )
+
+                client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points,
                 )
+                total_upserted += len(points)
 
-            self._client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=points,
-            )
-            total_upserted += len(points)
-
-            # Eagerly free ONNX intermediate buffers
-            del embeddings, points, texts
-            gc.collect()
+                # Eagerly free ONNX intermediate buffers
+                del embeddings, points, texts
+                gc.collect()
 
         logger.info(
             "qdrant_nodes_ingested",
@@ -234,12 +254,13 @@ class QdrantCodeClient:
                 ),
             )
 
-        results = self._client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector.tolist(),
-            query_filter=Filter(must=must_conditions),
-            limit=top_k,
-        )
+        with self.session() as client:
+            results = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_vector.tolist(),
+                query_filter=Filter(must=must_conditions),
+                limit=top_k,
+            )
 
         return [
             {
@@ -255,10 +276,11 @@ class QdrantCodeClient:
 
     def clear_collection(self) -> None:
         """Delete all points. Use for testing only."""
-        self._client.delete(
-            collection_name=COLLECTION_NAME,
-            points_selector=FilterSelector(filter=Filter(must=[])),
-        )
+        with self.session() as client:
+            client.delete(
+                collection_name=COLLECTION_NAME,
+                points_selector=FilterSelector(filter=Filter(must=[])),
+            )
         logger.warning("qdrant_collection_cleared")
 
     @staticmethod
