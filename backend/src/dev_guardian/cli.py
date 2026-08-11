@@ -879,5 +879,57 @@ def docs(
     logger.info("docs_complete", output=str(wiki_path))
 
 
+@app.command("docs-status")
+def docs_status(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the repository root.",
+            exists=True,
+            file_okay=False,
+            resolve_path=True,
+        ),
+    ],
+    wiki: Annotated[
+        Path,
+        typer.Option(
+            "--wiki",
+            "-w",
+            help="Path to the generated wiki (default: GUARDIAN_WIKI.md).",
+        ),
+    ] = Path("GUARDIAN_WIKI.md"),
+) -> None:
+    """Check whether GUARDIAN_WIKI.md is stale relative to the repo's HEAD.
+
+    Exits 0 when the wiki's embedded commit matches HEAD, non-zero when it
+    is behind. Composable as a CI gate step (`dev-guardian docs-status .`).
+    """
+    from dev_guardian.docs.staleness import StalenessCheckError, check_staleness
+
+    wiki_path = wiki if wiki.is_absolute() else path / wiki
+
+    try:
+        result = check_staleness(path, wiki_path)
+    except StalenessCheckError as exc:
+        _echo(f"[bold red]❌ {exc}[/bold red]", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not result.stale:
+        _echo(
+            f"[bold green]✅ Docs are fresh[/bold green] "
+            f"(HEAD {result.head_sha[:8]} matches recorded commit)."
+        )
+        return
+
+    _echo(
+        f"[bold red]❌ Docs are stale:[/bold red] {result.commits_behind} commit(s) behind.\n"
+        f"  recorded: {result.recorded_sha}\n"
+        f"  HEAD:     {result.head_sha}\n"
+        f"  Fix: run `dev-guardian docs {path}` and commit the updated wiki.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
