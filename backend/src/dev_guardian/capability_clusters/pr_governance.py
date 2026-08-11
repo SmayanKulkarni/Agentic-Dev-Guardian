@@ -10,6 +10,7 @@ Loaded JIT when the IDE agent calls equip_capability("pr_governance").
 from __future__ import annotations
 
 import json
+import subprocess
 
 from dev_guardian.capability_clusters.core import CLUSTER_REGISTRY
 from dev_guardian.core.logging import get_logger
@@ -92,15 +93,75 @@ def _evaluate_pr_diff(
         return json.dumps({"error": f"[Guardian Error] PR evaluation failed: {exc}"})
 
 
+def _raise_github_issue(
+    title: str,
+    body: str,
+    repo_path: str = ".",
+    labels: str | None = None,
+) -> str:
+    """Open a GitHub issue via the `gh` CLI.
+
+    Shells out to `gh issue create` — same convention as Matt Pocock's
+    engineering skills use for issue-tracker operations. No GitHub API
+    client, no token handling in-process: auth comes from whatever `gh`
+    session is already active on the host (`gh auth login`), and the
+    target repo is inferred by `gh` from `git remote -v` in `repo_path`.
+
+    Use this tool when a PR evaluation should be escalated to a human —
+    e.g. Gatekeeper/Red Team rejected a diff and remediation isn't
+    appropriate or has already failed.
+
+    Args:
+        title: Issue title.
+        body: Issue body (markdown).
+        repo_path: Directory of the git clone `gh` should operate in.
+        labels: Optional comma-separated label string passed to `--label`.
+
+    Returns:
+        A JSON string: `{"issue_url": "<url>"}` on success, or
+        `{"error": "[Guardian Error] ..."}` on failure.
+    """
+    cmd = ["gh", "issue", "create", "--title", title, "--body", body]
+    if labels:
+        cmd += ["--label", labels]
+
+    logger.info("mcp_raise_github_issue", title=title, repo_path=repo_path)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.error("mcp_raise_github_issue_error", error="gh CLI not found")
+        return json.dumps(
+            {"error": "[Guardian Error] gh CLI not found on PATH"}
+        )
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        logger.error("mcp_raise_github_issue_error", error=stderr)
+        return json.dumps(
+            {"error": f"[Guardian Error] gh issue create failed: {stderr}"}
+        )
+
+    return json.dumps({"issue_url": result.stdout.strip()})
+
+
 # ── Cluster registration entry ──────────────────────────────────────
 
 CLUSTER_REGISTRY["pr_governance"] = {
     "description": (
         "Full MoA PR evaluation pipeline: Gatekeeper, Red Team, Supervisor, "
-        "and Remediation Specialist agents."
+        "and Remediation Specialist agents. Includes GitHub issue escalation."
     ),
     "tools": {
         "evaluate_pr_diff": _evaluate_pr_diff,
+        "raise_github_issue": _raise_github_issue,
     },
     "prompts": ["review_pr"],
 }
