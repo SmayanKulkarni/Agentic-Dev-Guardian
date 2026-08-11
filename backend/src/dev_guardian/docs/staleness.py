@@ -31,12 +31,17 @@ class StalenessResult:
 
 
 def _git(repo_path: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repo_path), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise StalenessCheckError(
+            f"git {' '.join(args)} failed for {repo_path}: {exc.stderr.strip()}"
+        ) from exc
     return result.stdout.strip()
 
 

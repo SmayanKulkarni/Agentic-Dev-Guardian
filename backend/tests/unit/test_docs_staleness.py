@@ -85,3 +85,12 @@ def test_wiki_without_marker_raises_clear_error(repo: Path) -> None:
 
     with pytest.raises(StalenessCheckError, match="guardian:commit"):
         check_staleness(repo, wiki_path)
+
+
+def test_recorded_sha_not_in_history_raises_clear_error(repo: Path) -> None:
+    """A SHA that doesn't exist (rewritten history, wrong repo) must fail
+    loudly via git, not silently report a wrong commits_behind count."""
+    wiki_path = _write_wiki(repo, "0" * 40)
+
+    with pytest.raises(StalenessCheckError, match="git rev-list"):
+        check_staleness(repo, wiki_path)

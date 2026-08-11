@@ -66,3 +66,10 @@ def test_reflects_stale_state(repo: Path) -> None:
     assert data["commits_behind"] == 1
     assert data["recorded_sha"] == recorded
     assert data["head_sha"] == head
+
+
+def test_missing_wiki_returns_error_json_instead_of_raising(repo: Path) -> None:
+    data = json.loads(get_docs_status(str(repo)))
+
+    assert "error" in data
+    assert "dev-guardian docs" in data["error"]
