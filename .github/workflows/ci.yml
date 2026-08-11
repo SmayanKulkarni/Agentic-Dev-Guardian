@@ -44,7 +44,9 @@ jobs:
         env:
           GROQ_API_KEY: "test-key-not-real"
         run: |
-          pytest tests/unit/ tests/integration/test_mcp_client_contract.py -v \
+          pytest tests/unit/ \
+            tests/integration/test_mcp_client_contract.py \
+            tests/integration/test_embedded_stores.py -v \
             -m "not integration and not llm" \
             --tb=short \
             --cov=src/dev_guardian/harness \
