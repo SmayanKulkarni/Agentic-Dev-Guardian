@@ -3,9 +3,10 @@ Typer CLI Interface for Agentic Dev Guardian.
 
 Architecture Blueprint Reference: Phase 1 — Core Python Package & AST Parsers.
 This module exposes the primary `dev-guardian` CLI commands:
-    - `dev-guardian init`: Start and health-check Memgraph + Qdrant.
-    - `dev-guardian index <path>`: Parse a codebase and ingest AST into GraphRAG.
-    - `dev-guardian evaluate <path>`: Evaluate a PR diff using GraphRAG + MoA agents.
+    - `dev-guardian index <path>`: Parse a codebase and ingest its AST into
+      the embedded stores under `<path>/.guardian/`.
+    - `dev-guardian evaluate <diff>`: Evaluate a PR diff using GraphRAG + MoA agents.
+    - `dev-guardian mcp-config`: Print the config block for your MCP client.
     - `dev-guardian version`: Print the current package version.
 """
 
@@ -45,20 +46,6 @@ def _echo(message: str = "", err: bool = False) -> None:
     (_stderr if err else _stdout).print(message)
 
 
-def _require_infra() -> None:
-    """Fail fast with a user-facing message when Memgraph/Qdrant are down.
-
-    Commands verify; only `dev-guardian init` starts anything (ticket 05).
-    """
-    from dev_guardian.core.infra import InfraError, require_ready
-
-    try:
-        require_ready()
-    except InfraError as exc:
-        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
 _MCP_COMMAND = "uvx"
 _MCP_ARGS = ["--from", "agentic-dev-guardian", "dev-guardian", "serve"]
 
@@ -80,9 +67,6 @@ def _mcp_env() -> dict[str, str]:
     """The env block every client shape carries, from the resolved settings."""
     import os
 
-    from dev_guardian.core.config import get_settings
-
-    s = get_settings()
     provider = os.environ.get("GUARDIAN_PROVIDER", "groq")
     key_var = {
         "groq": "GUARDIAN_GROQ_API_KEY",
@@ -91,10 +75,10 @@ def _mcp_env() -> dict[str, str]:
     }.get(provider)
     env = {
         "GUARDIAN_PROVIDER": provider,
-        "GUARDIAN_MEMGRAPH_HOST": s.memgraph_host,
-        "GUARDIAN_MEMGRAPH_PORT": str(s.memgraph_port),
-        "GUARDIAN_QDRANT_HOST": s.qdrant_host,
-        "GUARDIAN_QDRANT_PORT": str(s.qdrant_port),
+        # The repository whose `.guardian/` stores Guardian reads. The MCP
+        # client spawns the server with no useful cwd, so the repo is named
+        # explicitly rather than inferred.
+        "GUARDIAN_REPO": str(Path.cwd().resolve()),
     }
     if key_var:
         # Never echo the resolved key: this output gets pasted into chats,
@@ -145,82 +129,34 @@ def _mcp_config_json(client: str = "claude") -> str:
     return json.dumps({"mcpServers": {"guardian": server}}, indent=2)
 
 
-@app.command()
-def init(
-    timeout: Annotated[
-        float,
-        typer.Option("--timeout", help="Seconds to wait for services to become ready."),
-    ] = 90.0,
-    print_mcp_config: Annotated[
-        bool,
-        typer.Option(
-            "--print-mcp-config",
-            help="Print the config block to paste into your MCP client and exit.",
-        ),
-    ] = False,
+@app.command("mcp-config")
+def mcp_config(
     client: Annotated[
         str,
         typer.Option(
             "--client",
-            help="Which client --print-mcp-config targets: "
-            + ", ".join(MCP_CLIENTS),
+            help="Which client to emit config for: " + ", ".join(MCP_CLIENTS),
         ),
     ] = "claude",
 ) -> None:
-    """Start and verify Guardian's backing services (Memgraph + Qdrant).
+    """Print the config block to paste into your MCP client.
 
-    Reuses anything already listening on the configured ports and starts
-    Docker containers only for what is missing. Safe to re-run.
+    Guardian writes no config of its own — the IDE's `env` block is the
+    configuration channel, so this just prints what to paste. `GUARDIAN_REPO`
+    is filled in from the current directory, which is the repository the
+    server will read `.guardian/` from.
     """
-    from dev_guardian.core.infra import InfraError, bootstrap
-
-    if print_mcp_config:
-        try:
-            block = _mcp_config_json(client)
-        except KeyError:
-            _echo(
-                f"[bold red]Unknown client '{client}'. Expected one of: "
-                f"{', '.join(MCP_CLIENTS)}.[/bold red]",
-                err=True,
-            )
-            raise typer.Exit(code=2) from None
-        _echo(f"[dim]# paste into {MCP_CLIENTS[client]}[/dim]", err=True)
-        print(block)
-        return
-
     try:
-        statuses = bootstrap(timeout=timeout)
-    except InfraError as exc:
-        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    for s in statuses:
-        mark = "✅" if s.ready else "❌"
-        _echo(f"{mark} {s.name}: {s.host}:{s.port}")
-    _echo(
-        "[bold green]Guardian is ready.[/bold green] "
-        "Next: dev-guardian index <path>, then dev-guardian init --print-mcp-config"
-    )
-
-
-@app.command()
-def down() -> None:
-    """Stop the Memgraph/Qdrant containers that `dev-guardian init` started.
-
-    Services Guardian did not start are left running.
-    """
-    from dev_guardian.core.infra import InfraError, teardown
-
-    try:
-        stopped = teardown()
-    except InfraError as exc:
-        _echo(f"[bold red]✗[/bold red] {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    if stopped:
-        _echo(f"[bold green]Stopped:[/bold green] {', '.join(stopped)}")
-    else:
-        _echo("Nothing to stop — no Guardian-started containers running.")
+        block = _mcp_config_json(client)
+    except KeyError:
+        _echo(
+            f"[bold red]Unknown client '{client}'. Expected one of: "
+            f"{', '.join(MCP_CLIENTS)}.[/bold red]",
+            err=True,
+        )
+        raise typer.Exit(code=2) from None
+    _echo(f"[dim]# paste into {MCP_CLIENTS[client]}[/dim]", err=True)
+    print(block)
 
 
 @app.command()
@@ -243,11 +179,11 @@ def index(
         typer.Option(
             "--skip-vectors",
             help="Skip Qdrant vector embedding (saves ~300MB RAM). "
-            "Graph-only mode: Memgraph still gets the full AST.",
+            "Graph-only mode: Kùzu still gets the full AST.",
         ),
     ] = False,
 ) -> None:
-    """Parse code with Tree-sitter and ingest into Memgraph + Qdrant.
+    """Parse code with Tree-sitter and ingest into the embedded Kùzu + Qdrant stores.
 
     Uses streaming file-by-file ingestion to handle repositories of any
     size without running out of memory. Each file is parsed, ingested,
@@ -257,8 +193,6 @@ def index(
     Use --skip-vectors on memory-constrained systems to avoid loading
     the ~270MB ONNX embedding model entirely.
     """
-    _require_infra()
-
     import gc
 
     from dev_guardian.graphrag.vector_manager import predict_embedding_strategy
@@ -292,20 +226,20 @@ def index(
     _echo(f"[cyan]📂 Found {total_files} source files.[/cyan]")
 
     # ── Init GraphRAG backends ─────────────────────────────────
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from contextlib import ExitStack
 
-    _echo("[cyan]📡 Initializing Memgraph...[/cyan]")
-    mg = MemgraphClient()
-    mg.ensure_indexes()
+    from dev_guardian.graphrag.kuzu_client import KuzuClient
+
+    _echo(f"[cyan]📡 Opening embedded graph store in {path}/.guardian/kuzu...[/cyan]")
+    graph = KuzuClient(data_dir=path)
 
     qd = None
     if not skip_vectors:
-        _echo("[cyan]📡 Initializing Qdrant + ONNX embedder...[/cyan]")
+        _echo("[cyan]📡 Opening embedded vector store + ONNX embedder...[/cyan]")
         from dev_guardian.graphrag.qdrant_client import QdrantCodeClient
-        qd = QdrantCodeClient()
-        qd.ensure_collection()
+        qd = QdrantCodeClient(data_dir=path)
     else:
-        _echo("[yellow]⚡ --skip-vectors: Qdrant embedding disabled (saves RAM).[/yellow]")
+        _echo("[yellow]⚡ --skip-vectors: vector embedding disabled (saves RAM).[/yellow]")
 
     # ── Stream: parse one file → ingest → discard ──────────────
     total_nodes = 0
@@ -313,43 +247,48 @@ def index(
     total_vectors = 0
     file_count = 0
 
-    for file_path in all_files:
-        result = parser.parse_file(file_path)
-        if result.total_files == 0:
-            continue
+    # One outer session per store: both embedded engines take an exclusive
+    # file lock, and reopening per file would be pure overhead.
+    with ExitStack() as stack:
+        stack.enter_context(graph.session())
+        if qd is not None:
+            stack.enter_context(qd.session())
+            qd.ensure_collection()
 
-        # Ingest nodes into Memgraph (one-by-one Cypher MERGE)
-        for node in result.nodes:
-            mg._upsert_node(node)
-        total_nodes += len(result.nodes)
+        for file_path in all_files:
+            result = parser.parse_file(file_path)
+            if result.total_files == 0:
+                continue
 
-        # Ingest edges into Memgraph
-        for edge in result.edges:
-            mg._upsert_edge(edge)
-        total_edges += len(result.edges)
+            for node in result.nodes:
+                graph._upsert_node(node)
+            total_nodes += len(result.nodes)
 
-        # Embed + upsert nodes into Qdrant (batched internally at 32)
-        if qd is not None and result.nodes:
-            total_vectors += qd.ingest_nodes(result.nodes)
+            for edge in result.edges:
+                graph._upsert_edge(edge)
+            total_edges += len(result.edges)
 
-        file_count += 1
+            if qd is not None and result.nodes:
+                total_vectors += qd.ingest_nodes(result.nodes)
 
-        # Force Python to release this file's objects immediately
-        del result
-        gc.collect()
+            file_count += 1
 
-        # Progress every 50 files
-        if file_count % 50 == 0 or file_count == total_files:
-            _echo(
-                f"  [{file_count}/{total_files}] "
-                f"{total_nodes} nodes, {total_edges} edges, "
-                f"{total_vectors} vectors"
-            )
+            # Force Python to release this file's objects immediately
+            del result
+            gc.collect()
+
+            # Progress every 50 files
+            if file_count % 50 == 0 or file_count == total_files:
+                _echo(
+                    f"  [{file_count}/{total_files}] "
+                    f"{total_nodes} nodes, {total_edges} edges, "
+                    f"{total_vectors} vectors"
+                )
 
     _echo(
         f"[bold cyan]✅ Indexed {file_count} files — "
-        f"{total_nodes} Memgraph Nodes, {total_edges} Memgraph Edges, "
-        f"{total_vectors} Qdrant Vectors.[/bold cyan]"
+        f"{total_nodes} graph nodes, {total_edges} graph edges, "
+        f"{total_vectors} vectors → {path}/.guardian[/bold cyan]"
     )
     logger.info(
         "index_complete",
@@ -392,8 +331,6 @@ def evaluate(
     ] = 0,
 ) -> None:
     """Evaluate a PR diff with GraphRAG context and the MoA decision pipeline."""
-    _require_infra()
-
     from dev_guardian.agents.graph import build_guardian_graph
     from dev_guardian.graphrag.hybrid_retriever import HybridRetriever
 
@@ -404,8 +341,8 @@ def evaluate(
     pr_diff = diff_file.read_text(encoding="utf-8")
 
     # Retrieve GraphRAG context
-    _echo("[cyan]📡 Querying GraphRAG (Memgraph + Qdrant)...[/cyan]")
-    retriever = HybridRetriever()
+    _echo("[cyan]📡 Querying GraphRAG (Kùzu + Qdrant)...[/cyan]")
+    retriever = HybridRetriever(data_dir=repo_path)
     
     # ── JIT Vector Embedding (Phase 5.7) ──────────
     import re
@@ -505,7 +442,7 @@ def audit(
 ) -> None:
     """Proactively audit a codebase for bugs, security issues, and bad patterns.
 
-    Queries Memgraph for the N highest blast-radius functions (most function
+    Queries Kùzu for the N highest blast-radius functions (most function
     calls = most complex code), reads their actual source from disk, and runs
     them through the full Gatekeeper + Red Team agent pipeline to find real issues.
 
@@ -513,12 +450,10 @@ def audit(
         dev-guardian audit /path/to/sktime-main
         dev-guardian audit /path/to/sktime-main --top 10
     """
-    _require_infra()
-
     from dev_guardian.audit import run_audit
 
     _echo(f"[bold green]🔍 Guardian Audit:[/bold green] {path}")
-    _echo(f"[cyan]Scanning top {top} highest-risk functions via Memgraph...[/cyan]\n")
+    _echo(f"[cyan]Scanning top {top} highest-risk functions via Kùzu...[/cyan]\n")
 
     report = run_audit(
         path=path,
@@ -582,7 +517,7 @@ def incident(
     """Triage a production incident and generate a targeted hotfix blueprint.
 
     Runs the Phase 5.2 SRE Pipeline:
-    IncidentTriager (Memgraph) → SandboxReproducer (MoA) → HotfixScribe (Groq).
+    IncidentTriager (Kùzu) → SandboxReproducer (MoA) → HotfixScribe (Groq).
 
     Examples:
         guardian incident --trace "Traceback..." --path ./my_repo
@@ -590,8 +525,6 @@ def incident(
         guardian incident --trace "Traceback..." --triage-only
     """
     # ── Resolve stack trace input ───────────────────────────────
-    _require_infra()
-
     if trace_file is not None and Path(trace_file).exists():
         stack_trace = Path(trace_file).read_text(encoding="utf-8")
     elif trace:
@@ -690,7 +623,7 @@ def refactor(
     """Generate a Self-Healing migration blueprint from a pattern or natural language.
 
     Accepts either a registered pattern key OR free-form English. Guardian's
-    PatternTranslator agent will auto-generate the Memgraph Cypher query for you.
+    PatternTranslator agent will auto-generate the Kùzu Cypher query for you.
 
     Examples:
         guardian refactor --pattern migrate-pydantic-v1-to-v2 --path ./my_repo
@@ -707,8 +640,6 @@ def refactor(
             "\n[dim]Tip: You can also pass any natural language intent as --pattern.[/dim]"
         )
         return
-
-    _require_infra()
 
     from dev_guardian.agents.refactor_graph import build_refactor_graph
 
@@ -774,6 +705,15 @@ def serve(
         int,
         typer.Option("--port", help="Bind port for --transport streamable-http."),
     ] = 8000,
+    repo: Annotated[
+        Path,
+        typer.Option(
+            "--repo",
+            help="Repository whose .guardian/ stores this server reads. "
+            "Defaults to $GUARDIAN_REPO, then the current directory.",
+            resolve_path=True,
+        ),
+    ] = None,  # type: ignore[assignment]
 ) -> None:
     """Start the MCP server for IDE integration.
 
@@ -783,8 +723,10 @@ def serve(
     as Cursor, Claude Desktop, or Windsurf. Everything else loads JIT.
 
     Under the default stdio transport the server talks over stdin/stdout
-    and your IDE spawns it — run `dev-guardian init --print-mcp-config`
-    for the JSON block to paste.
+    and your IDE spawns it — run `dev-guardian mcp-config` for the JSON
+    block to paste. The graph and vector stores are embedded, so nothing
+    needs to be running first; an unindexed repository simply answers with
+    no results.
 
     `--transport streamable-http` serves the same tools over HTTP instead,
     for running one Guardian on the machine that holds the indexed
@@ -800,7 +742,10 @@ def serve(
         )
         raise typer.Exit(code=2)
 
-    _require_infra()
+    import os
+
+    if repo is not None:
+        os.environ["GUARDIAN_REPO"] = str(repo)
 
     from dev_guardian.mcp_server import run_server
 
@@ -841,11 +786,11 @@ def docs(
         typer.Option("--clearance", "-c", help="Graph retrieval scope."),
     ] = 0,
 ) -> None:
-    """Generate a live architecture wiki from the indexed Memgraph graph.
+    """Generate a live architecture wiki from the indexed Kùzu graph.
 
     Phase 5.3: Auto-Generating Dynamic Documentation.
 
-    Queries the already-indexed Memgraph AST graph (no re-parsing needed)
+    Queries the already-indexed Kùzu AST graph (no re-parsing needed)
     to produce a comprehensive markdown wiki containing:
       - Module dependency flowchart (Mermaid)
       - Class inheritance hierarchy (Mermaid)
@@ -855,21 +800,19 @@ def docs(
     All diagrams are derived from IMPORTS / CALLS / INHERITS_FROM edges.
     ADR narration uses the configured LLM provider (GUARDIAN_PROVIDER).
     """
-    _require_infra()
-
     from dev_guardian.docs.wiki_builder import build_wiki, save_wiki
-    from dev_guardian.graphrag.memgraph_client import MemgraphClient
+    from dev_guardian.graphrag.kuzu_client import KuzuClient
 
     logger.info("docs_start", path=str(path), top=top)
     _echo(f"[bold green]📖 Guardian Docs:[/bold green] {path}")
     _echo(f"[cyan]Generating wiki for top {top} highest-complexity functions...[/cyan]")
 
-    mg = MemgraphClient()
+    graph = KuzuClient(data_dir=path)
 
-    _echo("[cyan]📡 Querying Memgraph for module graph...[/cyan]")
+    _echo("[cyan]📡 Querying Kùzu for module graph...[/cyan]")
     wiki_content = build_wiki(
         repo_path=path,
-        mg=mg,
+        graph=graph,
         top_n=top,
         user_clearance=clearance,
     )
