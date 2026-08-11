@@ -1,0 +1,34 @@
+name: Docs Sync Gate
+
+# Ticket 6: gates GUARDIAN_WIKI.md against HEAD without ever generating docs
+# in CI (that needs Memgraph + Qdrant). Regeneration stays local: run
+# `dev-guardian docs .` with an indexed Memgraph, commit the updated wiki,
+# and push — this job only checks the SHA already embedded in the wiki.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  docs-status:
+    name: Check GUARDIAN_WIKI.md freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install agentic-dev-guardian from PyPI
+        run: pip install agentic-dev-guardian
+
+      - name: Check docs staleness
+        run: |
+          if ! dev-guardian docs-status .; then
+            echo "::error::GUARDIAN_WIKI.md is stale. Run 'dev-guardian docs .' locally with an indexed Memgraph, commit the updated wiki, and push."
+            exit 1
+          fi

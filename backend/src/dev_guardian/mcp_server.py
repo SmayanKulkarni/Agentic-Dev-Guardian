@@ -308,6 +308,34 @@ def get_security_policy() -> str:
     return policy
 
 
+@mcp.resource("guardian://docs-status/{path}")
+def get_docs_status(path: str) -> str:
+    """Staleness of GUARDIAN_WIKI.md at `path` relative to the repo's HEAD.
+
+    Returns JSON with `stale` (bool), `commits_behind` (int),
+    `recorded_sha`, and `head_sha` on success, or `{"error": "..."}` if no
+    wiki has been generated yet at `path`/GUARDIAN_WIKI.md or the check
+    otherwise can't be computed.
+    """
+    from pathlib import Path
+
+    from dev_guardian.docs.staleness import StalenessCheckError, check_staleness
+
+    repo_path = Path(path)
+    try:
+        result = check_staleness(repo_path, repo_path / "GUARDIAN_WIKI.md")
+    except StalenessCheckError as exc:
+        return json.dumps({"error": str(exc)})
+    return json.dumps(
+        {
+            "stale": result.stale,
+            "commits_behind": result.commits_behind,
+            "recorded_sha": result.recorded_sha,
+            "head_sha": result.head_sha,
+        }
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  PROMPTS — Pre-defined system instructions for common workflows
 # ═══════════════════════════════════════════════════════════════════
