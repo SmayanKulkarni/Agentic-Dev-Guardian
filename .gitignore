@@ -28,6 +28,9 @@ Thumbs.db
 .mypy_cache/
 .pyright/
 
+# Embedded Kuzu + Qdrant stores (per indexed repo, always regenerable)
+.guardian/
+
 # Test / coverage artifacts
 .coverage
 .pytest_cache/
