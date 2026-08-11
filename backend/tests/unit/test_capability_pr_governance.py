@@ -11,8 +11,6 @@ import os
 import stat
 from pathlib import Path
 
-import pytest
-
 from dev_guardian.capability_clusters.pr_governance import (
     CLUSTER_REGISTRY,
     _raise_github_issue,
