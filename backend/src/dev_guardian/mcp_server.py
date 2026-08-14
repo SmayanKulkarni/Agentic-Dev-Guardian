@@ -23,6 +23,11 @@ via the "Bootstrap → Equip → Work → Unequip" lifecycle:
   3. FastMCP emits `notifications/tools/list_changed` so the IDE refreshes.
   4. Agent uses the new tools and calls unequip_capability when done.
 
+Most clients never act on step 3, so an equipped tool silently never
+appears mid-session. GUARDIAN_PRELOAD_CLUSTERS therefore defaults to
+`all` (every cluster equipped at startup, lean-context JIT off) unless
+explicitly set to `none`/`off` for a client confirmed to refresh live.
+
 Security:
     - All queries enforce ABAC clearance filtering.
     - Raw proprietary code is NEVER sent to the LLM; only AST-derived
@@ -405,12 +410,23 @@ def investigate_function(function_name: str) -> str:
 def resolve_preload(value: str | None) -> list[str]:
     """Cluster names named by GUARDIAN_PRELOAD_CLUSTERS.
 
-    ``all`` means every registered cluster; otherwise a comma-separated list.
-    Unknown names are dropped rather than raising: a stale name in an IDE's
-    env block must not stop the server from starting.
+    ``all`` means every registered cluster; a comma-separated list preloads
+    only those names (unknown names are dropped rather than raising: a stale
+    name in an IDE's env block must not stop the server from starting).
+
+    Most MCP clients never act on ``notifications/tools/list_changed``, so a
+    JIT-equipped tool silently never appears — the exact failure this
+    defaults against. An *unset* var (``value is None``, i.e. the IDE's env
+    block never mentions it) therefore defaults to ``all``: tools work out
+    of the box everywhere, at the cost of a fuller context window. Clients
+    confirmed to refresh their tool list can opt into the lean JIT
+    experience explicitly with ``GUARDIAN_PRELOAD_CLUSTERS=none`` (or
+    ``off``, or an empty/blank string).
     """
-    raw = (value or "").strip()
-    if not raw:
+    if value is None:
+        return list(CLUSTER_REGISTRY)
+    raw = value.strip()
+    if not raw or raw.lower() in ("none", "off"):
         return []
     if raw.lower() == "all":
         return list(CLUSTER_REGISTRY)
@@ -455,10 +471,12 @@ def run_server(
         port: Bind port for the HTTP transports.
 
     Env:
-        GUARDIAN_PRELOAD_CLUSTERS: ``all`` or a comma-separated list of
-            cluster names to equip at startup, for clients that do not act
-            on ``notifications/tools/list_changed`` and so would never see
-            a JIT-equipped tool appear.
+        GUARDIAN_PRELOAD_CLUSTERS: ``all`` (the default when unset) or a
+            comma-separated list of cluster names to equip at startup, for
+            clients that do not act on ``notifications/tools/list_changed``
+            and so would never see a JIT-equipped tool appear. Set to
+            ``none`` (or ``off``, or blank) to opt into the lean JIT
+            experience on a client confirmed to refresh its tool list.
 
     Note:
         Equipped capabilities are process-global, not per-connection. Under

@@ -253,11 +253,13 @@ Index at least one repository before you point an IDE at the server.
 
 ### Clients that ignore `tools/list_changed`
 
-JIT equipping assumes your client refreshes its tool list when the server notifies it. If
-yours does not, equipped tools never become visible. Set `GUARDIAN_PRELOAD_CLUSTERS=all` in
-the server's `env` block to register every cluster at startup instead — a fuller context
-window in exchange for tools that are there from the first message. A comma-separated list
-(`pr_governance,codebase_intelligence`) preloads only those.
+JIT equipping assumes your client refreshes its tool list when the server notifies it. Most
+don't, so by default Guardian preloads every cluster at startup (`GUARDIAN_PRELOAD_CLUSTERS`
+defaults to `all` when unset) — a fuller context window in exchange for tools that are there
+from the first message, on any client, with no configuration. A comma-separated list
+(`pr_governance,codebase_intelligence`) preloads only those. If your client is confirmed to
+refresh its tool list live, set `GUARDIAN_PRELOAD_CLUSTERS=none` (or `off`) in the server's
+`env` block to get the lean, JIT-only experience instead.
 
 ### Serving over HTTP
 

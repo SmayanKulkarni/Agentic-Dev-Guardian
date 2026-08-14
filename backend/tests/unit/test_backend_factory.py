@@ -66,6 +66,16 @@ class TestGetBackend:
         )
         assert backend_factory.get_backend(provider) is sentinel
 
+    def test_claude_cli_dispatches(self, monkeypatch):
+        from dev_guardian.harness import backend_factory
+
+        sentinel = object()
+        monkeypatch.setattr(
+            "dev_guardian.harness.backends.claude_cli_backend.ClaudeCLIBackend",
+            lambda: sentinel,
+        )
+        assert backend_factory.get_backend("claude_cli") is sentinel
+
     def test_unknown_provider_raises(self):
         from dev_guardian.harness import backend_factory
 

@@ -88,8 +88,17 @@ def test_preload_setting_propagates_into_the_emitted_env(monkeypatch):
 # ── Preload resolution ───────────────────────────────────────────────────────
 
 
-def test_preload_unset_equips_nothing():
-    assert resolve_preload(None) == []
+def test_preload_unset_equips_everything():
+    """Most clients never act on tools/list_changed, so unset must default
+    to working-everywhere (preload all), not lean-and-silently-broken."""
+    from dev_guardian.capability_clusters.core import CLUSTER_REGISTRY
+
+    assert sorted(resolve_preload(None)) == sorted(CLUSTER_REGISTRY)
+
+
+def test_preload_explicit_none_or_off_opts_into_lean_jit():
+    assert resolve_preload("none") == []
+    assert resolve_preload("off") == []
     assert resolve_preload("  ") == []
 
 

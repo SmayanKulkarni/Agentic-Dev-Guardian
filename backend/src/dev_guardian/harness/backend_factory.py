@@ -13,7 +13,15 @@ import os
 from dev_guardian.harness.backends import LLMBackend
 from dev_guardian.harness.errors import BackendUnavailableError
 
-_PROVIDERS = ("groq", "anthropic", "openai", "ollama", "local", "huggingface")
+_PROVIDERS = (
+    "groq",
+    "anthropic",
+    "openai",
+    "ollama",
+    "local",
+    "huggingface",
+    "claude_cli",
+)
 
 
 def get_backend(name: str | None = None) -> LLMBackend:
@@ -60,6 +68,10 @@ def get_backend(name: str | None = None) -> LLMBackend:
         from dev_guardian.harness.backends.openai_compatible import LocalBackend
 
         return LocalBackend()
+    if provider == "claude_cli":
+        from dev_guardian.harness.backends.claude_cli_backend import ClaudeCLIBackend
+
+        return ClaudeCLIBackend()
 
     from dev_guardian.harness.backends.openai_compatible import HuggingFaceBackend
 
