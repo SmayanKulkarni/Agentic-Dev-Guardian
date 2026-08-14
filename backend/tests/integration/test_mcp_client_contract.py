@@ -17,6 +17,7 @@ a client that re-lists on notification (or on every turn) will observe it.
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -43,7 +44,10 @@ COLD_START_BUDGET_SECONDS = 15.0
 _SERVER = StdioServerParameters(
     command=sys.executable,
     args=["-c", "from dev_guardian.mcp_server import run_server; run_server()"],
-    env=None,
+    # This suite exercises the JIT lifecycle itself, so it opts out of the
+    # preload-all default (docs/README) to keep the bootstrap-only assertion
+    # meaningful.
+    env={**os.environ, "GUARDIAN_PRELOAD_CLUSTERS": "none"},
 )
 
 
